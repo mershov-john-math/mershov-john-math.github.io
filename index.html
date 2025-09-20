@@ -567,6 +567,7 @@
                     break;
                 case 'ITEM':
                     if (player.heals > 0) {
+                        gameState.battleState = 'WAITING'; // Lock input
                         player.heals--;
                         const healAmount = Math.floor(player.maxHp * 0.4);
                         player.hp = Math.min(player.maxHp, player.hp + healAmount);
@@ -582,6 +583,7 @@
         });
         
         function handleAct(act) {
+            gameState.battleState = 'WAITING'; // Lock input
             let logText = `* You selected ${act}. `;
             let attackBoost = 1;
             
@@ -880,6 +882,7 @@
     </script>
 </body>
 </html>
+
 
 
 
