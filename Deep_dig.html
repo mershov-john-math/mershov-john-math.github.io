@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deep Dig: Roguelike Platformer</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: white;
+            font-family: 'Press Start 2P', monospace;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated; /* Retro look */
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            padding: 20px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        .stat-box {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px;
+            border: 2px solid #444;
+            border-radius: 4px;
+        }
+
+        #health-bar-container {
+            width: 200px;
+            height: 20px;
+            background: #333;
+            border: 2px solid #fff;
+            margin-top: 5px;
+        }
+
+        #health-fill {
+            width: 100%;
+            height: 100%;
+            background: #e74c3c;
+            transition: width 0.2s;
+        }
+
+        #message-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0,0,0,0.85);
+            padding: 40px;
+            border: 4px solid white;
+            display: block; /* CHANGED FROM none TO block */
+            pointer-events: auto;
+            z-index: 100; /* Ensure it's on top */
+        }
+
+        button {
+            background: #fff;
+            color: #000;
+            border: none;
+            padding: 15px 30px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        button:hover {
+            background: #ccc;
+        }
+
+        .tutorial {
+            font-size: 10px;
+            color: #aaa;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div class="stat-box">
+                <div>DEPTH: <span id="level-display">1</span></div>
+                <div style="font-size: 12px; color: #aaa; margin-top:5px;" id="biome-display">Stone Caverns</div>
+            </div>
+            <div class="stat-box">
+                <div>HP</div>
+                <div id="health-bar-container"><div id="health-fill"></div></div>
+            </div>
+        </div>
+        <div class="stat-box" style="align-self: flex-start;">
+            <div class="tutorial">WASD/Arrows to Move • Mouse to Dig • Find the Portal</div>
+        </div>
+    </div>
+
+    <div id="message-overlay">
+        <h1 id="overlay-title">DEEP DIG</h1>
+        <p id="overlay-desc">Traverse the caves. Find the exit.</p>
+        <button id="start-btn" onclick="startGame()">DESCEND</button>
+    </div>
+</div>
+
+<script>
+/**
+ * Game Configuration & Constants
+ */
+const TILE_SIZE = 32;
+const CHUNK_WIDTH = 60;
+const CHUNK_HEIGHT = 40;
+const GRAVITY = 0.5;
+const TERMINAL_VELOCITY = 12;
+const DIG_RANGE = 150;
+
+// Biome Definitions
+const BIOMES = [
+    {
+        name: "Stone Caverns",
+        bg: "#1a1a1a",
+        tileColors: ["#4a4a4a", "#5a5a5a", "#3a3a3a"],
+        friction: 0.8,
+        hazardChance: 0,
+        enemyDensity: 0.02
+    },
+    {
+        name: "Mossy Depths",
+        bg: "#0d1a0d",
+        tileColors: ["#2d4a2d", "#3d6a3d", "#1e331e"],
+        friction: 0.75, // Slightly stickier
+        hazardChance: 0.01,
+        enemyDensity: 0.04
+    },
+    {
+        name: "Glacial Hollows",
+        bg: "#0d1a26",
+        tileColors: ["#6fa8dc", "#9fc5e8", "#3d85c6"],
+        friction: 0.96, // Slippery
+        hazardChance: 0.05,
+        enemyDensity: 0.03
+    },
+    {
+        name: "Magma Core",
+        bg: "#260d0d",
+        tileColors: ["#7f2a2a", "#a63939", "#591e1e"],
+        friction: 0.8,
+        hazardChance: 0.1, // High chance of lava
+        enemyDensity: 0.06
+    }
+];
+
+/**
+ * Global State
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let animationId;
+let lastTime = 0;
+
+let gameState = {
+    level: 1,
+    biomeIndex: 0,
+    camera: { x: 0, y: 0 },
+    grid: [],
+    width: 0,
+    height: 0,
+    particles: [],
+    enemies: [],
+    exit: { x: 0, y: 0 },
+    isGameOver: false
+};
+
+const player = {
+    x: 0, y: 0,
+    width: 20, height: 20,
+    vx: 0, vy: 0,
+    speed: 0.5,
+    jump: -10,
+    grounded: false,
+    hp: 100,
+    maxHp: 100,
+    color: '#f1c40f',
+    facingRight: true
+};
+
+const mouse = { x: 0, y: 0, active: false };
+
+/**
+ * Input Handling
+ */
+const keys = {};
+
+window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (e.code === 'KeyR' && gameState.isGameOver) startGame();
+});
+window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+window.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+});
+
+window.addEventListener('mousedown', () => mouse.active = true);
+window.addEventListener('mouseup', () => mouse.active = false);
+
+window.addEventListener('resize', resizeCanvas);
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx.imageSmoothingEnabled = false;
+}
+resizeCanvas();
+
+/**
+ * Core Game Functions
+ */
+
+function startGame() {
+    document.getElementById('message-overlay').style.display = 'none';
+    gameState.level = 1;
+    gameState.isGameOver = false;
+    player.hp = player.maxHp;
+    player.vx = 0;
+    player.vy = 0;
+    
+    generateLevel();
+    loop(0);
+}
+
+function nextLevel() {
+    gameState.level++;
+    gameState.particles = [];
+    generateLevel();
+}
+
+function generateLevel() {
+    gameState.biomeIndex = Math.floor((gameState.level - 1) / 2) % BIOMES.length;
+    const biome = BIOMES[gameState.biomeIndex];
+    
+    // Update UI
+    document.getElementById('level-display').textContent = gameState.level;
+    document.getElementById('biome-display').textContent = biome.name;
+    document.getElementById('health-fill').style.width = '100%';
+
+    gameState.width = CHUNK_WIDTH;
+    gameState.height = CHUNK_HEIGHT + Math.floor(gameState.level * 2); // Get deeper/longer
+    gameState.grid = [];
+    gameState.enemies = [];
+
+    // Initialize Grid (Cellular Automata Seed)
+    for (let y = 0; y < gameState.height; y++) {
+        const row = [];
+        for (let x = 0; x < gameState.width; x++) {
+            // Edges are always walls
+            if (x === 0 || x === gameState.width - 1 || y === 0 || y === gameState.height - 1) {
+                row.push({ type: 1, variant: 0 }); // 1 = Wall
+            } else {
+                // Random noise
+                row.push({ type: Math.random() < 0.48 ? 1 : 0, variant: Math.floor(Math.random() * 3) });
+            }
+        }
+        gameState.grid.push(row);
+    }
+
+    // Cellular Automata Smoothing
+    for (let i = 0; i < 5; i++) {
+        const newGrid = JSON.parse(JSON.stringify(gameState.grid));
+        for (let y = 1; y < gameState.height - 1; y++) {
+            for (let x = 1; x < gameState.width - 1; x++) {
+                let neighbors = 0;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        if (gameState.grid[y+dy][x+dx].type === 1) neighbors++;
+                    }
+                }
+                
+                if (neighbors > 4) newGrid[y][x].type = 1;
+                else if (neighbors < 4) newGrid[y][x].type = 0;
+            }
+        }
+        gameState.grid = newGrid;
+    }
+
+    // Add Hazards (Magma/Spikes)
+    if (biome.hazardChance > 0) {
+        for (let y = 0; y < gameState.height; y++) {
+            for (let x = 0; x < gameState.width; x++) {
+                if (gameState.grid[y][x].type === 0 && Math.random() < biome.hazardChance) {
+                    // Check if floor is below
+                    if (y + 1 < gameState.height && gameState.grid[y+1][x].type === 1) {
+                        gameState.grid[y][x].type = 2; // 2 = Hazard
+                    }
+                }
+            }
+        }
+    }
+
+    // Find spawn and exit
+    // Simple logic: Spawn top left-ish, Exit bottom right-ish
+    let spawnFound = false;
+    for (let y = 2; y < gameState.height; y++) {
+        for (let x = 2; x < gameState.width/2; x++) {
+            if (gameState.grid[y][x].type === 0 && gameState.grid[y+1][x].type === 1) {
+                player.x = x * TILE_SIZE;
+                player.y = y * TILE_SIZE;
+                spawnFound = true;
+                break;
+            }
+        }
+        if (spawnFound) break;
+    }
+    
+    // Force spawn if bad gen
+    if (!spawnFound) {
+        player.x = 2 * TILE_SIZE;
+        player.y = 2 * TILE_SIZE;
+        // Clear space
+        for(let py=1; py<4; py++) for(let px=1; px<4; px++) gameState.grid[py][px].type = 0;
+    }
+
+    // SNAP CAMERA TO PLAYER IMMEDIATELY
+    // This prevents the "black screen" issue where the light source (player) is off-screen while the camera pans
+    gameState.camera.x = player.x - canvas.width / 2;
+    gameState.camera.y = player.y - canvas.height / 2;
+    // Clamp initial camera to bounds
+    gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, gameState.width * TILE_SIZE - canvas.width));
+    gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, gameState.height * TILE_SIZE - canvas.height));
+
+    // Place Exit
+    let exitFound = false;
+    for (let y = gameState.height - 3; y > gameState.height / 2; y--) {
+        for (let x = gameState.width - 3; x > gameState.width / 2; x--) {
+            if (gameState.grid[y][x].type === 0 && gameState.grid[y+1][x].type === 1) {
+                gameState.exit = { x: x * TILE_SIZE, y: y * TILE_SIZE };
+                exitFound = true;
+                break;
+            }
+        }
+        if (exitFound) break;
+    }
+    
+    if (!exitFound) {
+        // Force Exit
+        gameState.exit = { x: (gameState.width - 2) * TILE_SIZE, y: (gameState.height - 3) * TILE_SIZE };
+        for(let py=gameState.height-4; py<gameState.height-1; py++) {
+            for(let px=gameState.width-4; px<gameState.width-1; px++) {
+                gameState.grid[py][px].type = 0;
+            }
+        }
+        gameState.grid[gameState.height-2][gameState.width-2].type = 1; // Floor for exit
+    }
+
+    // Spawn Enemies
+    const enemyCount = Math.floor(gameState.width * gameState.height * biome.enemyDensity * 0.1);
+    for (let i = 0; i < enemyCount; i++) {
+        let ex, ey;
+        let attempts = 0;
+        do {
+            ex = Math.floor(Math.random() * gameState.width);
+            ey = Math.floor(Math.random() * gameState.height);
+            attempts++;
+        } while ((gameState.grid[ey][ex].type !== 0 || distance(ex*TILE_SIZE, ey*TILE_SIZE, player.x, player.y) < 300) && attempts < 100);
+
+        if (attempts < 100) {
+            gameState.enemies.push({
+                x: ex * TILE_SIZE,
+                y: ey * TILE_SIZE,
+                vx: Math.random() > 0.5 ? 1 : -1,
+                vy: 0,
+                width: 20,
+                height: 20,
+                type: 'walker'
+            });
+        }
+    }
+}
+
+/**
+ * Game Loop
+ */
+function loop(timestamp) {
+    if (gameState.isGameOver) return;
+    
+    const dt = timestamp - lastTime;
+    lastTime = timestamp;
+
+    update();
+    draw();
+
+    animationId = requestAnimationFrame(loop);
+}
+
+function update() {
+    const biome = BIOMES[gameState.biomeIndex];
+
+    // --- Player Movement ---
+    // Horizontal
+    if (keys['ArrowLeft'] || keys['KeyA']) {
+        player.vx -= player.speed;
+        player.facingRight = false;
+    }
+    if (keys['ArrowRight'] || keys['KeyD']) {
+        player.vx += player.speed;
+        player.facingRight = true;
+    }
+
+    // Friction
+    player.vx *= biome.friction;
+
+    // Gravity
+    player.vy += GRAVITY;
+    if (player.vy > TERMINAL_VELOCITY) player.vy = TERMINAL_VELOCITY;
+
+    // Apply Velocity
+    player.x += player.vx;
+    handleCollisions(player, true); // X axis
+    player.y += player.vy;
+    handleCollisions(player, false); // Y axis
+
+    // Jump
+    if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && player.grounded) {
+        player.vy = player.jump;
+        player.grounded = false;
+        createParticles(player.x + player.width/2, player.y + player.height, 5, '#fff');
+    }
+
+    // --- Digging ---
+    if (mouse.active) {
+        const worldMx = mouse.x + gameState.camera.x;
+        const worldMy = mouse.y + gameState.camera.y;
+        
+        const dist = distance(player.x + player.width/2, player.y + player.height/2, worldMx, worldMy);
+        
+        if (dist <= DIG_RANGE) {
+            const tx = Math.floor(worldMx / TILE_SIZE);
+            const ty = Math.floor(worldMy / TILE_SIZE);
+
+            if (tx >= 1 && tx < gameState.width - 1 && ty >= 1 && ty < gameState.height - 1) {
+                if (gameState.grid[ty][tx].type !== 0) {
+                    gameState.grid[ty][tx].type = 0; // Destroy
+                    createParticles(worldMx, worldMy, 3, biome.tileColors[0]);
+                }
+            }
+        }
+    }
+
+    // --- Enemies ---
+    gameState.enemies.forEach((enemy, index) => {
+        // Simple AI: Move back and forth, gravity
+        enemy.vy += GRAVITY;
+        enemy.x += enemy.vx * 2;
+        handleCollisions(enemy, true);
+        
+        // If hit wall, reverse
+        if (enemy.vx === 0) enemy.vx = Math.random() > 0.5 ? 2 : -2;
+
+        enemy.y += enemy.vy;
+        handleCollisions(enemy, false);
+
+        // Player Collision
+        if (rectIntersect(player.x, player.y, player.width, player.height, enemy.x, enemy.y, enemy.width, enemy.height)) {
+            // Goomba stomp check
+            if (player.vy > 0 && player.y + player.height < enemy.y + enemy.height / 2) {
+                gameState.enemies.splice(index, 1); // Kill enemy
+                player.vy = -5; // Bounce
+                createParticles(enemy.x, enemy.y, 10, '#e74c3c');
+            } else {
+                damagePlayer(10);
+                // Knockback
+                player.vx = (player.x < enemy.x ? -10 : 10);
+                player.vy = -5;
+            }
+        }
+    });
+
+    // --- Hazards ---
+    // Check center of player
+    const cx = Math.floor((player.x + player.width/2) / TILE_SIZE);
+    const cy = Math.floor((player.y + player.height/2) / TILE_SIZE);
+    if (cy >= 0 && cy < gameState.height && cx >= 0 && cx < gameState.width) {
+        if (gameState.grid[cy][cx].type === 2) {
+            damagePlayer(1);
+        }
+    }
+
+    // --- Level End ---
+    if (rectIntersect(player.x, player.y, player.width, player.height, gameState.exit.x, gameState.exit.y, TILE_SIZE, TILE_SIZE)) {
+        nextLevel();
+    }
+
+    // --- Camera ---
+    // Smooth follow
+    const targetCamX = player.x - canvas.width / 2;
+    const targetCamY = player.y - canvas.height / 2;
+    
+    gameState.camera.x += (targetCamX - gameState.camera.x) * 0.1;
+    gameState.camera.y += (targetCamY - gameState.camera.y) * 0.1;
+
+    // Bounds
+    gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, gameState.width * TILE_SIZE - canvas.width));
+    gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, gameState.height * TILE_SIZE - canvas.height));
+
+    // --- Particles ---
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const p = gameState.particles[i];
+        p.life--;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.1; // gravity
+        if (p.life <= 0) gameState.particles.splice(i, 1);
+    }
+
+    // Void death
+    if (player.y > gameState.height * TILE_SIZE) damagePlayer(100);
+}
+
+function draw() {
+    const biome = BIOMES[gameState.biomeIndex];
+
+    // Background
+    ctx.fillStyle = biome.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(-Math.floor(gameState.camera.x), -Math.floor(gameState.camera.y));
+
+    // Calculate view bounds to only draw visible tiles
+    const startCol = Math.floor(gameState.camera.x / TILE_SIZE);
+    const endCol = startCol + (canvas.width / TILE_SIZE) + 1;
+    const startRow = Math.floor(gameState.camera.y / TILE_SIZE);
+    const endRow = startRow + (canvas.height / TILE_SIZE) + 1;
+
+    // Draw Grid
+    for (let y = Math.max(0, startRow); y < Math.min(gameState.height, endRow); y++) {
+        for (let x = Math.max(0, startCol); x < Math.min(gameState.width, endCol); x++) {
+            const tile = gameState.grid[y][x];
+            if (tile.type === 1) {
+                ctx.fillStyle = biome.tileColors[tile.variant];
+                ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            } else if (tile.type === 2) {
+                // Hazard (Lava/Spikes)
+                ctx.fillStyle = `hsl(${Date.now() / 10 % 360}, 70%, 50%)`; // Pulsing
+                ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE + 10, TILE_SIZE, TILE_SIZE - 10);
+            }
+        }
+    }
+
+    // Draw Exit
+    ctx.fillStyle = '#9b59b6';
+    ctx.fillRect(gameState.exit.x, gameState.exit.y, TILE_SIZE, TILE_SIZE);
+    ctx.fillStyle = '#fff';
+    ctx.font = '10px Arial';
+    ctx.fillText('EXIT', gameState.exit.x + 2, gameState.exit.y - 5);
+
+    // Draw Player
+    ctx.fillStyle = player.color;
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+    // Eyes
+    ctx.fillStyle = '#000';
+    if (player.facingRight) {
+        ctx.fillRect(player.x + 12, player.y + 4, 4, 4);
+    } else {
+        ctx.fillRect(player.x + 4, player.y + 4, 4, 4);
+    }
+
+    // Draw Dig Range Indicator
+    // REMOVED THE BROKEN RETURN STATEMENT HERE
+    if (!mouse.active) {
+         // Optional: Uncomment to show range circle
+        /*
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.beginPath();
+        ctx.arc(player.x + player.width/2, player.y + player.height/2, DIG_RANGE, 0, Math.PI * 2);
+        ctx.stroke();
+        */
+    }
+
+    // Draw Mouse Cursor Highlight
+    const mx = mouse.x + gameState.camera.x;
+    const my = mouse.y + gameState.camera.y;
+    const mtx = Math.floor(mx / TILE_SIZE);
+    const mty = Math.floor(my / TILE_SIZE);
+    
+    if (distance(player.x+player.width/2, player.y+player.height/2, mx, my) <= DIG_RANGE) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(mtx * TILE_SIZE, mty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+
+    // Draw Enemies
+    ctx.fillStyle = '#e74c3c';
+    gameState.enemies.forEach(e => {
+        ctx.fillRect(e.x, e.y, e.width, e.height);
+        // Eyes
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(e.x + 4, e.y + 4, 4, 4);
+        ctx.fillRect(e.x + 12, e.y + 4, 4, 4);
+        ctx.fillStyle = '#e74c3c';
+    });
+
+    // Draw Particles
+    gameState.particles.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+    });
+
+    // Simple Lighting Gradient Overlay
+    // We create a radial gradient at player pos
+    // BUT we need to draw it on top of everything. 
+    // Since 'globalCompositeOperation' with gradients is tricky in a single pass with scrolling,
+    // we will simulate darkness by drawing a giant semi-transparent black rectangle with a hole.
+    // Actually, simple darkness overlay is easier:
+    
+    ctx.restore(); // Back to screen space for UI-like overlay if needed
+    
+    // Vignette / Cave darkness
+    // Safety check to prevent pitch black screen if coordinates are NaN
+    let lightX = player.x - gameState.camera.x + player.width/2;
+    let lightY = player.y - gameState.camera.y + player.height/2;
+
+    // Fallback to center screen if calculations fail
+    if (isNaN(lightX) || isNaN(lightY)) {
+        lightX = canvas.width / 2;
+        lightY = canvas.height / 2;
+    }
+
+    const gradient = ctx.createRadialGradient(
+        lightX, 
+        lightY, 
+        150, 
+        lightX, 
+        lightY, 
+        800
+    );
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(1, "rgba(0,0,0,0.95)");
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+/**
+ * Helpers & Physics
+ */
+
+function handleCollisions(obj, isXAxis) {
+    // Get tiles around object
+    const startX = Math.floor(obj.x / TILE_SIZE);
+    const endX = Math.floor((obj.x + obj.width) / TILE_SIZE);
+    const startY = Math.floor(obj.y / TILE_SIZE);
+    const endY = Math.floor((obj.y + obj.height) / TILE_SIZE);
+
+    for (let y = startY; y <= endY; y++) {
+        for (let x = startX; x <= endX; x++) {
+            if (y >= 0 && y < gameState.height && x >= 0 && x < gameState.width) {
+                const tile = gameState.grid[y][x];
+                if (tile.type === 1) { // Wall
+                    if (isXAxis) {
+                        if (obj.vx > 0) { // Moving Right
+                            obj.x = x * TILE_SIZE - obj.width - 0.01;
+                            obj.vx = 0;
+                        } else if (obj.vx < 0) { // Moving Left
+                            obj.x = (x + 1) * TILE_SIZE + 0.01;
+                            obj.vx = 0;
+                        }
+                    } else {
+                        if (obj.vy > 0) { // Falling
+                            obj.y = y * TILE_SIZE - obj.height - 0.01;
+                            obj.vy = 0;
+                            obj.grounded = true;
+                        } else if (obj.vy < 0) { // Jumping up
+                            obj.y = (y + 1) * TILE_SIZE + 0.01;
+                            obj.vy = 0;
+                        }
+                    }
+                    return; // Collision handled
+                }
+            }
+        }
+    }
+    // If we are checking Y and didn't hit anything falling, grounded is false
+    if (!isXAxis && obj.vy >= 0) {
+        // Double check just below feet to stick to ground or fall
+        // Simplified: The update loop resets grounded usually, 
+        // but here we just ensure if we are in air, we aren't grounded.
+        // The collision resolution above sets grounded = true.
+    }
+}
+
+function damagePlayer(amount) {
+    player.hp -= amount;
+    const hpPct = Math.max(0, (player.hp / player.maxHp) * 100);
+    document.getElementById('health-fill').style.width = hpPct + '%';
+    
+    // Screen shake effect (fake)
+    gameState.camera.x += (Math.random() - 0.5) * 10;
+    gameState.camera.y += (Math.random() - 0.5) * 10;
+
+    if (player.hp <= 0 && !gameState.isGameOver) {
+        gameOver();
+    }
+}
+
+function gameOver() {
+    gameState.isGameOver = true;
+    document.getElementById('overlay-title').innerText = "GAME OVER";
+    document.getElementById('overlay-desc').innerText = `You reached Depth ${gameState.level}`;
+    document.getElementById('start-btn').innerText = "TRY AGAIN";
+    document.getElementById('message-overlay').style.display = 'block';
+}
+
+function createParticles(x, y, count, color) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push({
+            x: x,
+            y: y,
+            vx: (Math.random() - 0.5) * 5,
+            vy: (Math.random() - 0.5) * 5,
+            life: 30 + Math.random() * 20,
+            color: color,
+            size: 2 + Math.random() * 3
+        });
+    }
+}
+
+function distance(x1, y1, x2, y2) {
+    return Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+}
+
+function rectIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
+    return x2 < x1 + w1 && x2 + w2 > x1 && y2 < y1 + h1 && y2 + h2 > y1;
+}
+
+</script>
+</body>
+</html>
