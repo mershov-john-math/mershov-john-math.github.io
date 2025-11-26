@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cave Delver: Roguelike</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            overflow: hidden;
+            touch-action: none;
+            font-family: 'Courier New', Courier, monospace;
+            color: white;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #gameCanvas {
+            display: block;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .hud-top {
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+            text-shadow: 1px 1px 0 #000;
+        }
+
+        .stat-box {
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        #controls {
+            pointer-events: auto;
+            display: none; /* Shown on touch devices via JS */
+            padding: 20px;
+            width: 100%;
+            box-sizing: border-box;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding-bottom: 40px;
+        }
+
+        .d-pad {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .action-pad {
+            display: flex;
+            gap: 15px;
+        }
+
+        .btn {
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: white;
+            backdrop-filter: blur(4px);
+            touch-action: manipulation;
+        }
+
+        .btn:active {
+            background: rgba(255, 255, 255, 0.5);
+            transform: scale(0.95);
+        }
+
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            z-index: 10;
+        }
+
+        h1 { font-size: 40px; margin-bottom: 10px; color: #4ade80; text-transform: uppercase; letter-spacing: 2px; text-align: center;}
+        h2 { color: #f87171; margin-bottom: 5px; }
+        p { max-width: 600px; text-align: center; line-height: 1.6; color: #ccc; margin-bottom: 30px; padding: 0 20px;}
+        
+        .menu-btn {
+            padding: 15px 40px;
+            font-size: 24px;
+            background: #4ade80;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            text-transform: uppercase;
+            box-shadow: 0 4px 0 #22c55e;
+            transition: transform 0.1s;
+        }
+
+        .menu-btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 0 #22c55e;
+        }
+
+        .hidden { display: none !important; }
+
+        /* Mobile specific adjustments */
+        @media (max-width: 768px) {
+            #controls { display: flex; }
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div class="stat-box" style="color:#f87171;">HP: <span id="hud-hp">100</span></div>
+            <div class="stat-box" style="color:#fbbf24;">DEPTH: <span id="hud-depth">1</span></div>
+            <div class="stat-box" style="color:#60a5fa;">BIOME: <span id="hud-biome">Moss</span></div>
+        </div>
+
+        <div id="controls">
+            <div class="d-pad">
+                <div class="btn" id="btn-left">←</div>
+                <div class="btn" id="btn-right">→</div>
+            </div>
+            <div class="action-pad">
+                <div class="btn" id="btn-dig">⛏️</div>
+                <div class="btn" id="btn-jump">↑</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="start-screen">
+        <h1>Cave Delver</h1>
+        <p>Traverse deep, procedurally generated caverns.<br>Use <b>Arrow Keys/WASD</b> to move.<br><b>Mouse Click</b> or <b>X</b> to Dig/Attack.<br>Find the <span style="color:#a78bfa">Portal</span> to go deeper.</p>
+        <button class="menu-btn" onclick="startGame()">Descend</button>
+    </div>
+
+    <div id="game-over-screen" class="hidden">
+        <h1>Perished</h1>
+        <h2 id="death-reason">Slain by a slime</h2>
+        <p>Depth Reached: <span id="final-depth">1</span></p>
+        <button class="menu-btn" onclick="startGame()">Try Again</button>
+    </div>
+
+    <script>
+        // --- Constants & Config ---
+        const TILE_SIZE = 32;
+        const GRAVITY = 0.5;
+        const TERMINAL_VELOCITY = 15;
+        const ACCEL = 1.5;
+        const FRICTION = 0.82;
+        const JUMP_FORCE = -13;
+        
+        const CHUNK_WIDTH = 60;  // Tiles
+        const CHUNK_HEIGHT = 40; // Tiles
+
+        const BIOMES = {
+            MOSS: { name: 'Mossy Caverns', color: '#4ade80', bg: '#064e3b', wall: '#14532d', friction: 0.8, particle: '#86efac' },
+            ICE: { name: 'Frozen Depths', color: '#60a5fa', bg: '#0c4a6e', wall: '#1e3a8a', friction: 0.96, particle: '#bfdbfe' }, // Slippery
+            MAGMA: { name: 'Magma Core', color: '#f87171', bg: '#450a0a', wall: '#7f1d1d', friction: 0.8, particle: '#fca5a5' }
+        };
+
+        // --- Game State ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let gameState = 'MENU'; // MENU, PLAYING, GAMEOVER
+        let lastTime = 0;
+        let camera = { x: 0, y: 0 };
+        
+        let map = [];
+        let particles = [];
+        let enemies = [];
+        let exitPortal = null;
+        let depth = 1;
+        let currentBiome = BIOMES.MOSS;
+
+        const input = {
+            left: false,
+            right: false,
+            up: false,
+            dig: false,
+            mouseX: 0,
+            mouseY: 0,
+            mouseDown: false
+        };
+
+        const player = {
+            x: 0, y: 0,
+            width: 20, height: 28,
+            vx: 0, vy: 0,
+            grounded: false,
+            hp: 100,
+            maxHp: 100,
+            digRange: 100,
+            facingRight: true,
+            iframe: 0
+        };
+
+        // --- Resize Handling ---
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.imageSmoothingEnabled = false;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- Input Handling ---
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') input.left = true;
+            if (e.key === 'ArrowRight' || e.key === 'd') input.right = true;
+            if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') input.up = true;
+            if (e.key === 'x' || e.key === 'k') input.dig = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') input.left = false;
+            if (e.key === 'ArrowRight' || e.key === 'd') input.right = false;
+            if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') input.up = false;
+            if (e.key === 'x' || e.key === 'k') input.dig = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            input.mouseX = e.clientX;
+            input.mouseY = e.clientY;
+        });
+
+        canvas.addEventListener('mousedown', () => { input.mouseDown = true; input.dig = true; });
+        canvas.addEventListener('mouseup', () => { input.mouseDown = false; input.dig = false; });
+
+        // Touch Controls
+        const setupTouch = (id, key) => {
+            const el = document.getElementById(id);
+            
+            const handleStart = (e) => { e.preventDefault(); input[key] = true; };
+            const handleEnd = (e) => { e.preventDefault(); input[key] = false; };
+
+            el.addEventListener('touchstart', handleStart);
+            el.addEventListener('touchend', handleEnd);
+            el.addEventListener('touchcancel', handleEnd); // Fix stuck keys on system interrupt
+
+            // Add Mouse support for testing/hybrid devices
+            el.addEventListener('mousedown', handleStart);
+            el.addEventListener('mouseup', handleEnd);
+            el.addEventListener('mouseleave', handleEnd); // Fix stuck keys if dragging off button
+        };
+        setupTouch('btn-left', 'left');
+        setupTouch('btn-right', 'right');
+        setupTouch('btn-jump', 'up');
+        setupTouch('btn-dig', 'dig');
+
+
+        // --- Procedural Generation (Cellular Automata) ---
+        function generateLevel() {
+            map = [];
+            enemies = [];
+            particles = [];
+            
+            // 1. Determine Biome
+            if (depth < 4) currentBiome = BIOMES.MOSS;
+            else if (depth < 7) currentBiome = BIOMES.ICE;
+            else currentBiome = BIOMES.MAGMA;
+
+            document.getElementById('hud-biome').textContent = currentBiome.name;
+            document.getElementById('hud-biome').style.color = currentBiome.color;
+            document.getElementById('hud-depth').textContent = depth;
+
+            // 2. Initialize Grid (Random Noise)
+            for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                let row = [];
+                for (let x = 0; x < CHUNK_WIDTH; x++) {
+                    // Borders are always walls
+                    if (x === 0 || x === CHUNK_WIDTH - 1 || y === 0 || y === CHUNK_HEIGHT - 1) {
+                        row.push(1);
+                    } else {
+                        // 48% chance to be a wall initially
+                        row.push(Math.random() < 0.48 ? 1 : 0);
+                    }
+                }
+                map.push(row);
+            }
+
+            // 3. Smooth (Cellular Automata)
+            // Run 5 iterations
+            for (let i = 0; i < 5; i++) {
+                let newMap = JSON.parse(JSON.stringify(map));
+                for (let y = 1; y < CHUNK_HEIGHT - 1; y++) {
+                    for (let x = 1; x < CHUNK_WIDTH - 1; x++) {
+                        let neighbors = getNeighborCount(x, y);
+                        if (neighbors > 4) newMap[y][x] = 1;
+                        else if (neighbors < 4) newMap[y][x] = 0;
+                    }
+                }
+                map = newMap;
+            }
+
+            // 4. Find Spawn (Top Left-ish empty spot)
+            let spawnFound = false;
+            for(let y = 5; y < CHUNK_HEIGHT; y++) {
+                for(let x = 5; x < CHUNK_WIDTH; x++) {
+                    if(map[y][x] === 0 && map[y+1][x] === 1) {
+                        player.x = x * TILE_SIZE + (TILE_SIZE/2) - (player.width/2);
+                        player.y = y * TILE_SIZE - player.height;
+                        player.vx = 0;
+                        player.vy = 0;
+                        spawnFound = true;
+                        break;
+                    }
+                }
+                if(spawnFound) break;
+            }
+            if(!spawnFound) { 
+                // Force spawn if bad gen
+                player.x = 100; player.y = 100;
+                map[3][3] = 0; map[4][3] = 1; 
+            }
+
+            // 5. Place Exit (Bottom Right-ish)
+            let exitFound = false;
+            for(let y = CHUNK_HEIGHT - 5; y > 0; y--) {
+                for(let x = CHUNK_WIDTH - 5; x > 0; x--) {
+                    if(map[y][x] === 0 && map[y+1][x] === 1) {
+                        // Ensure distance from player
+                        let dx = (x * TILE_SIZE) - player.x;
+                        let dy = (y * TILE_SIZE) - player.y;
+                        if (Math.sqrt(dx*dx + dy*dy) > 500) {
+                            // CHANGED: w/h -> width/height
+                            exitPortal = { x: x * TILE_SIZE, y: y * TILE_SIZE, width: TILE_SIZE, height: TILE_SIZE };
+                            exitFound = true;
+                            break;
+                        }
+                    }
+                }
+                if(exitFound) break;
+            }
+
+            // 6. Spawn Enemies
+            let enemyCount = 3 + Math.floor(depth * 0.8);
+            for(let i=0; i<enemyCount; i++) {
+                let ex, ey;
+                let valid = false;
+                while(!valid) {
+                    let mx = Math.floor(Math.random() * (CHUNK_WIDTH - 2)) + 1;
+                    let my = Math.floor(Math.random() * (CHUNK_HEIGHT - 2)) + 1;
+                    if(map[my][mx] === 0 && map[my+1][mx] === 1) {
+                         // Check distance from player
+                        let dx = (mx * TILE_SIZE) - player.x;
+                        let dy = (my * TILE_SIZE) - player.y;
+                        if(Math.sqrt(dx*dx + dy*dy) > 300) {
+                            valid = true;
+                            ex = mx * TILE_SIZE + 8;
+                            ey = my * TILE_SIZE + 8;
+                        }
+                    }
+                }
+                
+                let type = 'slime';
+                if(depth > 3 && Math.random() > 0.6) type = 'bat';
+                
+                // CHANGED: w/h -> width/height
+                enemies.push({
+                    x: ex, y: ey,
+                    width: 24, height: 24,
+                    vx: 0, vy: 0,
+                    type: type,
+                    hp: 20 + (depth * 5),
+                    grounded: false
+                });
+            }
+        }
+
+        function getNeighborCount(gridX, gridY) {
+            let count = 0;
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    if (i === 0 && j === 0) continue;
+                    let nx = gridX + i;
+                    let ny = gridY + j;
+                    if (nx < 0 || ny < 0 || nx >= CHUNK_WIDTH || ny >= CHUNK_HEIGHT) {
+                        count++;
+                    } else if (map[ny][nx] === 1) {
+                        count++;
+                    }
+                }
+            }
+            return count;
+        }
+
+        // --- Core Game Logic ---
+
+        function update() {
+            if (gameState !== 'PLAYING') return;
+
+            // Player Physics
+            if (input.left) {
+                player.vx -= ACCEL;
+                player.facingRight = false;
+            }
+            if (input.right) {
+                player.vx += ACCEL;
+                player.facingRight = true;
+            }
+
+            // Friction & Gravity
+            player.vx *= currentBiome.friction; // Biome friction
+            player.vy += GRAVITY;
+            
+            if (player.vy > TERMINAL_VELOCITY) player.vy = TERMINAL_VELOCITY;
+
+            // Jump
+            if (input.up && player.grounded) {
+                player.vy = JUMP_FORCE;
+                player.grounded = false;
+                spawnParticles(player.x + player.width/2, player.y + player.height, 5, '#fff');
+            }
+
+            // Move X
+            player.x += player.vx;
+            handleCollisions(player, 'x');
+
+            // Move Y
+            player.y += player.vy;
+            player.grounded = false;
+            handleCollisions(player, 'y');
+
+            // Map Boundaries
+            if(player.y > CHUNK_HEIGHT * TILE_SIZE) killPlayer("Fell into the void");
+
+            // Mining / Attacking
+            if (input.dig) {
+                // If mouse usage
+                if (!input.left && !input.right && !input.up && input.mouseDown) {
+                     // Dig towards mouse
+                     let worldMX = input.mouseX + camera.x;
+                     let worldMY = input.mouseY + camera.y;
+                     attemptDig(worldMX, worldMY);
+                     attemptAttack(worldMX, worldMY);
+                } else {
+                    // Directional Dig (Mobile/Keyboard primary)
+                    // Defaults to front of player
+                    let digX = player.x + (player.width/2) + (player.facingRight ? 30 : -30);
+                    let digY = player.y + (player.height/2);
+                    attemptDig(digX, digY);
+                    attemptAttack(digX, digY);
+                }
+            }
+
+            // Portal
+            if (checkRectCollide(player, exitPortal)) {
+                depth++;
+                generateLevel();
+                return; // Skip rest of frame
+            }
+
+            // Entities
+            updateEnemies();
+            updateParticles();
+
+            // Camera Follow
+            camera.x = player.x - canvas.width / 2;
+            camera.y = player.y - canvas.height / 2;
+
+            // Clamp Camera
+            camera.x = Math.max(0, Math.min(camera.x, CHUNK_WIDTH * TILE_SIZE - canvas.width));
+            camera.y = Math.max(0, Math.min(camera.y, CHUNK_HEIGHT * TILE_SIZE - canvas.height));
+            
+            // Iframe handling
+            if(player.iframe > 0) player.iframe--;
+            
+            // Update HUD
+            document.getElementById('hud-hp').innerText = Math.ceil(player.hp);
+        }
+
+        function handleCollisions(entity, axis) {
+            let startX = Math.floor(entity.x / TILE_SIZE);
+            let endX = Math.floor((entity.x + entity.width) / TILE_SIZE);
+            let startY = Math.floor(entity.y / TILE_SIZE);
+            let endY = Math.floor((entity.y + entity.height) / TILE_SIZE);
+
+            for (let y = startY; y <= endY; y++) {
+                for (let x = startX; x <= endX; x++) {
+                    if (y >= 0 && y < CHUNK_HEIGHT && x >= 0 && x < CHUNK_WIDTH) {
+                        if (map[y][x] === 1) {
+                            if (axis === 'x') {
+                                if (entity.vx > 0) entity.x = x * TILE_SIZE - entity.width - 0.1;
+                                else entity.x = (x + 1) * TILE_SIZE + 0.1;
+                                entity.vx = 0;
+                            } else {
+                                if (entity.vy > 0) {
+                                    entity.y = y * TILE_SIZE - entity.height - 0.1;
+                                    entity.grounded = true;
+                                } else {
+                                    entity.y = (y + 1) * TILE_SIZE + 0.1;
+                                }
+                                entity.vy = 0;
+                            }
+                            return; // Stop checking after first collision to prevent tunneling/stuck bugs
+                        }
+                    }
+                }
+            }
+        }
+
+        function attemptDig(targetX, targetY) {
+            // Distance Check
+            let dx = targetX - (player.x + player.width/2);
+            let dy = targetY - (player.y + player.height/2);
+            if (Math.sqrt(dx*dx + dy*dy) > player.digRange) return;
+
+            let tx = Math.floor(targetX / TILE_SIZE);
+            let ty = Math.floor(targetY / TILE_SIZE);
+
+            if (ty >= 0 && ty < CHUNK_HEIGHT && tx >= 0 && tx < CHUNK_WIDTH) {
+                if (map[ty][tx] === 1) {
+                    map[ty][tx] = 0;
+                    spawnParticles(targetX, targetY, 8, currentBiome.particle);
+                    shakeScreen(5);
+                }
+            }
+        }
+        
+        function attemptAttack(targetX, targetY) {
+            enemies.forEach((e, index) => {
+                // CHANGED: e.w/h -> e.width/height
+                if(targetX > e.x && targetX < e.x + e.width && 
+                   targetY > e.y && targetY < e.y + e.height) {
+                    
+                    // Distance check
+                    let dx = e.x - player.x;
+                    let dy = e.y - player.y;
+                    if(Math.sqrt(dx*dx + dy*dy) < player.digRange) {
+                        e.hp -= 10;
+                        e.vx += (e.x - player.x > 0 ? 5 : -5); // Knockback
+                        e.vy -= 3;
+                        spawnParticles(e.x + e.width/2, e.y + e.height/2, 5, '#ff0000');
+                        if(e.hp <= 0) {
+                            enemies.splice(index, 1);
+                            spawnParticles(e.x, e.y, 15, '#ff0000');
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateEnemies() {
+            enemies.forEach(e => {
+                // Gravity
+                e.vy += GRAVITY;
+                e.y += e.vy;
+                
+                // Safety Cap for enemy velocity
+                if(e.vy > TERMINAL_VELOCITY) e.vy = TERMINAL_VELOCITY;
+
+                handleCollisions(e, 'y');
+                
+                // AI
+                let distToPlayer = Math.sqrt(Math.pow(player.x - e.x, 2) + Math.pow(player.y - e.y, 2));
+                
+                if (distToPlayer < 300) {
+                    if (e.type === 'slime') {
+                        // Hop towards player
+                        if (e.grounded && Math.random() < 0.05) {
+                            e.vy = -6;
+                            e.vx = (player.x > e.x) ? 2 : -2;
+                            e.grounded = false;
+                        }
+                    } else if (e.type === 'bat') {
+                        // Fly towards player
+                        e.vx += (player.x > e.x) ? 0.1 : -0.1;
+                        e.vy += (player.y > e.y) ? 0.1 : -0.1;
+                        // Bat limit speed
+                        e.vx = Math.max(-3, Math.min(3, e.vx));
+                        e.vy = Math.max(-3, Math.min(3, e.vy));
+                        e.grounded = false; // Bats don't land
+                    }
+                } else {
+                    // Idle friction
+                    e.vx *= 0.9;
+                }
+                
+                // Friction
+                if(e.grounded) e.vx *= 0.9;
+                
+                e.x += e.vx;
+                handleCollisions(e, 'x');
+
+                // Player Collision (Damage)
+                if (checkRectCollide(player, e)) {
+                    if (player.iframe <= 0) {
+                        player.hp -= 15;
+                        player.iframe = 60; // 1 second immunity
+                        player.vx = (player.x < e.x) ? -8 : 8; // Knockback
+                        player.vy = -5;
+                        shakeScreen(10);
+                        spawnParticles(player.x, player.y, 10, '#fff');
+                        if (player.hp <= 0) killPlayer(`Slain by a ${e.type}`);
+                    }
+                }
+            });
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function spawnParticles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6,
+                    life: 20 + Math.random() * 20,
+                    color: color,
+                    size: Math.random() * 3 + 1
+                });
+            }
+        }
+
+        function checkRectCollide(r1, r2) {
+            // CHANGED: standardized to use width/height for both
+            return (r1.x < r2.x + r2.width &&
+                    r1.x + r1.width > r2.x &&
+                    r1.y < r2.y + r2.height &&
+                    r1.y + r1.height > r2.y);
+        }
+
+        let shakeFrames = 0;
+        function shakeScreen(amount) {
+            shakeFrames = amount;
+        }
+
+        function killPlayer(reason) {
+            gameState = 'GAMEOVER';
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            document.getElementById('ui-layer').classList.add('hidden');
+            document.getElementById('death-reason').innerText = reason;
+            document.getElementById('final-depth').innerText = depth;
+        }
+
+        // --- Rendering ---
+
+        function draw() {
+            // Background
+            ctx.fillStyle = currentBiome.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState !== 'PLAYING' && gameState !== 'GAMEOVER') return;
+
+            ctx.save();
+            
+            // Screen Shake
+            let shakeX = 0, shakeY = 0;
+            if(shakeFrames > 0) {
+                shakeX = (Math.random() - 0.5) * 10;
+                shakeY = (Math.random() - 0.5) * 10;
+                shakeFrames--;
+            }
+            
+            ctx.translate(-camera.x + shakeX, -camera.y + shakeY);
+
+            // Draw Map (Optimization: Only draw visible tiles)
+            let startCol = Math.floor(camera.x / TILE_SIZE);
+            let endCol = startCol + (canvas.width / TILE_SIZE) + 1;
+            let startRow = Math.floor(camera.y / TILE_SIZE);
+            let endRow = startRow + (canvas.height / TILE_SIZE) + 1;
+
+            ctx.fillStyle = currentBiome.wall;
+            for (let y = startRow; y <= endRow; y++) {
+                for (let x = startCol; x <= endCol; x++) {
+                    if (y >= 0 && y < CHUNK_HEIGHT && x >= 0 && x < CHUNK_WIDTH) {
+                        if (map[y][x] === 1) {
+                            ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                            // Highlight top edge
+                            ctx.fillStyle = "rgba(255,255,255,0.1)";
+                            ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, 4);
+                            ctx.fillStyle = currentBiome.wall;
+                        }
+                    }
+                }
+            }
+
+            // Draw Portal
+            if(exitPortal) {
+                ctx.fillStyle = '#a78bfa';
+                // CHANGED: w/h -> width/height
+                ctx.fillRect(exitPortal.x, exitPortal.y, exitPortal.width, exitPortal.height);
+                // Portal Glow
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = "#a78bfa";
+                ctx.fillRect(exitPortal.x + 5, exitPortal.y + 5, exitPortal.width - 10, exitPortal.height - 10);
+                ctx.shadowBlur = 0;
+            }
+
+            // Draw Enemies
+            enemies.forEach(e => {
+                ctx.fillStyle = (e.type === 'slime') ? '#a3e635' : '#818cf8';
+                // CHANGED: w/h -> width/height
+                ctx.fillRect(e.x, e.y, e.width, e.height);
+                // Eyes
+                ctx.fillStyle = 'white';
+                ctx.fillRect(e.x + 4, e.y + 4, 4, 4);
+                ctx.fillRect(e.x + 14, e.y + 4, 4, 4);
+                
+                // HP Bar
+                ctx.fillStyle = 'red';
+                ctx.fillRect(e.x, e.y - 6, e.width, 4);
+                ctx.fillStyle = 'lime';
+                ctx.fillRect(e.x, e.y - 6, e.width * (e.hp / (20 + (depth*5))), 4);
+            });
+
+            // Draw Player
+            if(player.iframe % 4 < 2) { // Blink if hit
+                ctx.fillStyle = 'white';
+                ctx.fillRect(player.x, player.y, player.width, player.height);
+                
+                // Equipment / Visor
+                ctx.fillStyle = '#f59e0b';
+                if(player.facingRight) {
+                    ctx.fillRect(player.x + 12, player.y + 6, 6, 4);
+                } else {
+                    ctx.fillRect(player.x + 2, player.y + 6, 6, 4);
+                }
+            }
+
+            // Draw Particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+            
+            // Dig Cursor (Mouse only)
+            if(!input.mouseDown) {
+                // If using mouse, show range indicator
+                /*
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+                ctx.beginPath();
+                ctx.arc(player.x + player.width/2, player.y + player.height/2, player.digRange, 0, Math.PI * 2);
+                ctx.stroke();
+                */
+            }
+
+            ctx.restore();
+        }
+
+        // --- Loop ---
+
+        function loop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+
+            update();
+            draw();
+
+            requestAnimationFrame(loop);
+        }
+
+        function startGame() {
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.add('hidden');
+            document.getElementById('ui-layer').classList.remove('hidden');
+            
+            gameState = 'PLAYING';
+            depth = 1;
+            player.hp = 100;
+            player.iframe = 0;
+            
+            generateLevel();
+        }
+
+        requestAnimationFrame(loop);
+
+    </script>
+</body>
+</html>
