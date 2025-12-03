@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>C±± — In-Browser Compiler (Prototype)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; display:flex; height:100vh; }
+    #left { width:50%; padding:10px; box-sizing:border-box; border-right:1px solid #ddd; display:flex; flex-direction:column; }
+    #right { flex:1; padding:10px; box-sizing:border-box; display:flex; flex-direction:column; }
+    textarea { width:100%; height:60%; font-family: monospace; font-size:13px; box-sizing:border-box; }
+    pre { background:#111; color:#eee; padding:10px; height:40%; overflow:auto; margin:0; }
+    button { margin-right:8px; }
+    #controls { margin:8px 0; }
+    #output { background:#f7f7f7; padding:10px; height:40%; overflow:auto; border:1px solid #ddd; }
+    .small { font-size:12px; color:#666; }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h3>C±± source</h3>
+    <textarea id="src">// demo.cpm - Point distance example
+
+struct Point {
+    float x;
+    float y;
+}
+
+fn distance(a: Point, b: Point) -> float {
+    let dx = a.x - b.x;
+    let dy = a.y - b.y;
+    return sqrt(dx*dx + dy*dy);
+}
+
+fn main() -> int {
+    let p1 = Point { 1.0, 2.0 };
+    let p2 = Point { 4.0, 6.0 };
+    let d = distance(p1, p2);
+    println("Distance: %f", d);
+    return 0;
+}
+</textarea>
+    <div id="controls">
+      <button id="compileBtn">Compile → JS</button>
+      <button id="runBtn">Run</button>
+      <button id="downloadBtn">Download JS</button>
+      <span class="small">(Transpiles a useful subset of C±± to JavaScript and runs it.)</span>
+    </div>
+    <h4>Generated JavaScript</h4>
+    <pre id="outjs">(click Compile)</pre>
+  </div>
+  <div id="right">
+    <h3>Console output</h3>
+    <div id="output">(click Run)</div>
+    <h4>Errors / Logs</h4>
+    <pre id="logs"></pre>
+  </div>
+
+<script>
+// Simple in-browser C±± -> JavaScript transpiler (prototype)
+// Supported subset: struct, fn, let, return, numbers, identifiers, binary ops, field access, function calls, struct literals, println->console
+
+// ---------------------- Lexer ----------------------
+function tokenize(src) {
+  const tokenSpec = [
+    ['NUMBER', /\d+(?:\.\d+)?/y],
+    ['FN', /\bfn\b/y],
+    ['STRUCT', /\bstruct\b/y],
+    ['LET', /\blet\b/y],
+    ['RETURN', /\breturn\b/y],
+    ['ARROW', /->/y],
+    ['LBRACE', /\{/y],
+    ['RBRACE', /\}/y],
+    ['LPAREN', /\(/y],
+    ['RPAREN', /\)/y],
+    ['SEMICOLON', /;/y],
+    ['COMMA', /,/y],
+    ['COLON', /:/y],
+    ['DOT', /\./y],
+    ['EQ', /=/y],
+    ['PLUS', /\+/y],
+    ['MINUS', /-/y],
+    ['STAR', /\*/y],
+    ['SLASH', /\//y],
+    ['IDENT', /[A-Za-z_][A-Za-z0-9_]*/y],
+    ['STRING', /"([^\\"]|\\.)*"/y],
+    ['SKIP', /[ \t\r\n]+/y],
+    ['COMMENT', /\/\/[^\n]*/y]
+  ];
+  let tokens = [];
+  let i = 0;
+  while (i < src.length) {
+    let matched = false;
+    for (let [type, re] of tokenSpec) {
+      re.lastIndex = i;
+      const m = re.exec(src);
+      if (m && m.index === i) {
+        matched = true;
+        if (type !== 'SKIP' && type !== 'COMMENT') {
+          tokens.push({type, val: m[0], pos: i});
+        }
+        i = re.lastIndex;
+        break;
+      }
+    }
+    if (!matched) {
+      throw new SyntaxError('Unexpected character at ' + i + ': ' + src.slice(i,i+10));
+    }
+  }
+  tokens.push({type:'EOF', val:'', pos:i});
+  return tokens;
+}
+
+// ---------------------- Parser ----------------------
+function Parser(tokens) {
+  this.toks = tokens; this.i = 0;
+}
+Parser.prototype.cur = function(){ return this.toks[this.i]; };
+Parser.prototype.eat = function(type){ const t = this.cur(); if(type && t.type !== type) throw new SyntaxError('Expected '+type+' got '+t.type+' at '+t.pos); this.i++; return t; };
+Parser.prototype.accept = function(type){ if(this.cur().type === type) return this.eat(type); return null; };
+
+Parser.prototype.parse = function(){
+  const items = [];
+  while(this.cur().type !== 'EOF'){
+    if(this.cur().type === 'STRUCT') items.push(this.parseStruct());
+    else if(this.cur().type === 'FN') items.push(this.parseFn());
+    else throw new SyntaxError('Unexpected top-level token '+this.cur().type);
+  }
+  return {type:'Program', items};
+};
+
+Parser.prototype.parseStruct = function(){
+  this.eat('STRUCT');
+  const name = this.eat('IDENT').val;
+  this.eat('LBRACE');
+  const fields = [];
+  while(this.cur().type !== 'RBRACE'){
+    const ftype = this.eat('IDENT').val;
+    const fname = this.eat('IDENT').val;
+    this.eat('SEMICOLON');
+    fields.push({ftype, fname});
+  }
+  this.eat('RBRACE');
+  return {type:'StructDecl', name, fields};
+};
+
+Parser.prototype.parseFn = function(){
+  this.eat('FN');
+  const name = this.eat('IDENT').val;
+  this.eat('LPAREN');
+  const params = [];
+  if(this.cur().type !== 'RPAREN'){
+    while(true){
+      const pname = this.eat('IDENT').val;
+      this.eat('COLON');
+      const ptype = this.eat('IDENT').val;
+      params.push({pname, ptype});
+      if(this.accept('COMMA')) continue; else break;
+    }
+  }
+  this.eat('RPAREN');
+  let ret = null;
+  if(this.accept('ARROW')) ret = this.eat('IDENT').val;
+  this.eat('LBRACE');
+  const body = [];
+  while(this.cur().type !== 'RBRACE'){
+    if(this.cur().type === 'LET') body.push(this.parseLet());
+    else if(this.cur().type === 'RETURN') body.push(this.parseReturn());
+    else body.push(this.parseExprStmt());
+  }
+  this.eat('RBRACE');
+  return {type:'FnDecl', name, params, ret, body};
+};
+
+Parser.prototype.parseLet = function(){ this.eat('LET'); const name = this.eat('IDENT').val; this.eat('EQ'); const expr = this.parseExpr(); this.eat('SEMICOLON'); return {type:'LetStmt', name, expr}; };
+Parser.prototype.parseReturn = function(){ this.eat('RETURN'); const expr = this.parseExpr(); this.eat('SEMICOLON'); return {type:'ReturnStmt', expr}; };
+Parser.prototype.parseExprStmt = function(){ const expr = this.parseExpr(); this.eat('SEMICOLON'); return {type:'ExprStmt', expr}; };
+
+// Precedence table
+const PREC = {'+':10, '-':10, '*':20, '/':20};
+Parser.prototype.parseExpr = function(minPrec=0){
+  let node = this.parsePrimary();
+  while(true){
+    const t = this.cur();
+    if(['PLUS','MINUS','STAR','SLASH'].includes(t.type)){
+      const op = t.val; const prec = PREC[op];
+      if(prec < minPrec) break;
+      this.eat();
+      const right = this.parseExpr(prec+1);
+      node = {type:'BinaryOp', left:node, op, right};
+    } else break;
+  }
+  return node;
+};
+
+Parser.prototype.parsePrimary = function(){
+  const t = this.cur();
+  if(t.type === 'NUMBER'){ this.eat(); return {type:'Number', val: t.val.includes('.')? parseFloat(t.val): parseInt(t.val,10)}; }
+  if(t.type === 'STRING'){ this.eat(); return {type:'String', val: t.val.slice(1,-1)}; }
+  if(t.type === 'IDENT'){
+    const name = this.eat('IDENT').val;
+    if(this.cur().type === 'LBRACE'){
+      // struct literal
+      this.eat('LBRACE'); const vals = [];
+      while(this.cur().type !== 'RBRACE'){ vals.push(this.parseExpr()); if(this.accept('COMMA')) continue; else break; }
+      this.eat('RBRACE');
+      return {type:'StructLiteral', typename: name, values: vals};
+    }
+    if(this.cur().type === 'LPAREN'){
+      this.eat('LPAREN'); const args=[]; if(this.cur().type !== 'RPAREN'){ while(true){ args.push(this.parseExpr()); if(this.accept('COMMA')) continue; break; } } this.eat('RPAREN'); return {type:'Call', callee: name, args};
+    }
+    // field access chain
+    let node = {type:'Ident', name};
+    while(this.accept('DOT')){ const field = this.eat('IDENT').val; node = {type:'FieldAccess', obj: node, field}; }
+    return node;
+  }
+  if(t.type === 'LPAREN'){ this.eat('LPAREN'); const e = this.parseExpr(); this.eat('RPAREN'); return e; }
+  throw new SyntaxError('Unexpected token in primary: '+t.type+' at '+t.pos);
+};
+
+// ---------------------- CodeGen -> JavaScript ----------------------
+function CodeGen(program) {
+  this.program = program; this.structs = {}; this.lines=[];
+}
+CodeGen.prototype.emit = function(s){ this.lines.push(s); };
+CodeGen.prototype.gen = function(){
+  // runtime helpers
+  this.emit("// Generated JS from C±± (prototype)");
+  this.emit("function println(){\n  const out = Array.from(arguments).join(' ');\n  try{appendOutput(out);}catch(e){console.log(out);}\n}");
+
+  // structs
+  for(const it of this.program.items){ if(it.type === 'StructDecl') this.genStruct(it); }
+  // functions
+  for(const it of this.program.items){ if(it.type === 'FnDecl') this.genFn(it); }
+  // run main by returning invocation
+  this.emit('\n// entrypoint: call main if present');
+  this.emit('if(typeof main === "function") main();');
+  return this.lines.join('\n');
+};
+
+CodeGen.prototype.genStruct = function(s){ this.structs[s.name]=s; // simple factory is emitted via literal usage
+  // we could emit a constructor, but for simplicity we'll use object literals when creating
+  // emit a constructor for convenience
+  const fields = s.fields.map(f=>f.fname).join(', ');
+  this.emit(`function ${s.name}(${fields}){`);
+  for(const f of s.fields){ this.emit(`  this.${f.fname} = ${f.fname};`); }
+  this.emit('}');
+};
+
+CodeGen.prototype.genFn = function(f){
+  const params = f.params.map(p=>p.pname).join(', ');
+  this.emit(`function ${f.name}(${params}){`);
+  for(const stmt of f.body) this.genStmt(stmt);
+  if(f.name === 'main'){
+    // ensure return 0 if not present — but JS doesn't need it
+  }
+  this.emit('}');
+};
+
+CodeGen.prototype.genStmt = function(s){
+  if(s.type === 'LetStmt'){
+    const {code, t} = this.genExpr(s.expr);
+    // if struct type, and expression already an object literal or call, assign
+    this.emit(`let ${s.name} = ${code};`);
+  } else if(s.type === 'ReturnStmt'){
+    const {code} = this.genExpr(s.expr);
+    this.emit(`return ${code};`);
+  } else if(s.type === 'ExprStmt'){
+    const {code} = this.genExpr(s.expr);
+    this.emit(`${code};`);
+  } else {
+    this.emit('// unhandled stmt');
+  }
+};
+
+CodeGen.prototype.genExpr = function(e){
+  if(e.type === 'Number') return {code: e.val.toString(), t: 'number'};
+  if(e.type === 'String') return {code: JSON.stringify(e.val), t: 'string'};
+  if(e.type === 'Ident') return {code: e.name, t: null};
+  if(e.type === 'BinaryOp'){
+    const L = this.genExpr(e.left).code; const R = this.genExpr(e.right).code; return {code: `(${L} ${e.op} ${R})`, t: 'number'};
+  }
+  if(e.type === 'Call'){
+    const args = e.args.map(a=>this.genExpr(a).code).join(', ');
+    if(e.callee === 'sqrt') return {code: `Math.sqrt(${args})`, t: 'number'};
+    if(e.callee === 'println'){
+      // map printf-style if first arg is format with %f
+      if(e.args.length >= 1 && typeof e.args[0].val === 'string' && e.args[0].val.includes('%')){
+        // simple formatter: replace %f with value placeholders
+        const fmt = e.args[0].val;
+        const rest = e.args.slice(1).map(a=>this.genExpr(a).code);
+        // naive: replace %f occurrences with ${} via template string
+        let parts = fmt.split('%f');
+        let expr = '`' + parts.map((p,i)=> p + (i<rest.length? '${' + rest[i] + '}':'')).join('') + '`';
+        return {code: `println(${expr})`, t: 'void'};
+      }
+      return {code: `println(${args})`, t: 'void'};
+    }
+    return {code: `${e.callee}(${args})`, t: null};
+  }
+  if(e.type === 'FieldAccess'){
+    const obj = this.genExpr(e.obj).code; return {code: `${obj}.${e.field}`, t: null};
+  }
+  if(e.type === 'StructLiteral'){
+    // prefer constructor if exists
+    if(this.structs[e.typename]){
+      const vals = e.values.map(v=>this.genExpr(v).code).join(', ');
+      return {code: `new ${e.typename}(${vals})`, t: e.typename};
+    } else {
+      const vals = e.values.map(v=>this.genExpr(v).code).join(', ');
+      return {code: `({${vals}})`, t: e.typename};
+    }
+  }
+  return {code: 'undefined', t:null};
+};
+
+// ---------------------- Driver ----------------------
+function compileSource(src){
+  try{
+    const toks = tokenize(src);
+    const p = new Parser(toks);
+    const prog = p.parse();
+    const cg = new CodeGen(prog);
+    const js = cg.gen();
+    return {success:true, js};
+  } catch(e){
+    return {success:false, err:e.toString()};
+  }
+}
+
+// UI helpers
+const srcEl = document.getElementById('src');
+const outEl = document.getElementById('outjs');
+const outDiv = document.getElementById('output');
+const logs = document.getElementById('logs');
+function appendOutput(s){ outDiv.innerText += s + '\n'; }
+
+document.getElementById('compileBtn').addEventListener('click', ()=>{
+  logs.innerText = '';
+  outDiv.innerText = '';
+  const res = compileSource(srcEl.value);
+  if(!res.success){ logs.innerText = 'Compile error: ' + res.err; outEl.innerText = '(error)'; return; }
+  outEl.innerText = res.js;
+});
+
+let lastJS = '';
+document.getElementById('runBtn').addEventListener('click', ()=>{
+  logs.innerText = '';
+  outDiv.innerText = '';
+  const res = compileSource(srcEl.value);
+  if(!res.success){ logs.innerText = 'Compile error: ' + res.err; return; }
+  lastJS = res.js;
+  try{
+    // sandboxed execution: create Function scope with appendOutput
+    const fn = new Function('appendOutput', res.js);
+    fn(appendOutput);
+  } catch(e){ logs.innerText = 'Runtime error: ' + e.toString(); }
+});
+
+// download generated JS
+document.getElementById('downloadBtn').addEventListener('click', ()=>{
+  const res = compileSource(srcEl.value);
+  if(!res.success){ logs.innerText = 'Compile error: ' + res.err; return; }
+  const blob = new Blob([res.js], {type:'application/javascript'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'out.js'; a.click(); URL.revokeObjectURL(url);
+});
+
+</script>
+</body>
+</html>
