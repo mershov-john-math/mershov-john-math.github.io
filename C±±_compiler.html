@@ -81,11 +81,12 @@ function tokenize(src) {
     ['PLUS', /\+/y],
     ['MINUS', /-/y],
     ['STAR', /\*/y],
-    ['SLASH', /\//y],
+    ['COMMENT', /\/\/[^\n]*/y],
     ['IDENT', /[A-Za-z_][A-Za-z0-9_]*/y],
     ['STRING', /"([^\\"]|\\.)*"/y],
     ['SKIP', /[ \t\r\n]+/y],
-    ['COMMENT', /\/\/[^\n]*/y]
+    ['SLASH', /\//y]
+    
   ];
   let tokens = [];
   let i = 0;
