@@ -33,5 +33,5 @@ jobs:
         git config user.name "GitHub Actions"
         git config user.email "actions@github.com"
         git add index.html
-        git commit -m "Auto-generate index.html" || echo "No changes"
-        git push
+        git commit -m "Auto-generate index.html" --allow-empty
+        git push origin main
