@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Wizard (Noita Clone)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            padding: 10px;
+        }
+        .hud-text {
+            text-shadow: 1px 1px 0 #000;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        #controls-hint {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            opacity: 0.7;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-layer">
+        <div class="hud-text" id="health-hud">HP: 100</div>
+        <div class="hud-text" id="gold-hud">Gold: 0</div>
+        <div class="hud-text" id="depth-hud">Depth: 1</div>
+        <div class="hud-text" id="mana-hud" style="color: #4da6ff;">Mana: 100</div>
+    </div>
+    <div id="controls-hint">WASD: Move/Jetpack | Mouse: Aim/Shoot | TAB/E: Inventory | F: Interact/Buy</div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+/**
+ * PIXEL WIZARD v2.1
+ * Fixed Gold Collection & Added Item Names
+ */
+
+// --- Constants & Config ---
+const TILE_SIZE = 8;
+const GRAVITY = 0.15;
+const TERMINAL_VELOCITY = 6;
+const JETPACK_FORCE = 0.35;
+const FRICTION = 0.85;
+
+const COLORS = {
+    background: '#151515',
+    rock: '#3d314a',
+    rock_light: '#544663',
+    dirt: '#4a3b32',
+    gold: '#ffd700',
+    blood: '#8a0303',
+    slime: '#00ff00',
+    player: '#9e26c9',
+    magic: '#b0ffff',
+    enemy_bat: '#758a36',
+    enemy_sniper: '#364a8a',
+    enemy_tank: '#5e2f2f',
+    shop_bg: '#2a2030'
+};
+
+const SPELL_TYPES = {
+    PROJECTILE: 'PROJ',
+    MODIFIER: 'MOD',
+    MULTICAST: 'MULTI'
+};
+
+// --- Assets / Data ---
+
+// Spell Database
+const SPELL_DB = {
+    // Projectiles
+    spark_bolt: { name: "Spark Bolt", type: SPELL_TYPES.PROJECTILE, mana: 5, damage: 5, speed: 7, spread: 0.05, color: '#ffea00', delay: 0.05, cost: 10 },
+    magic_missile: { name: "Magic Missile", type: SPELL_TYPES.PROJECTILE, mana: 25, damage: 20, speed: 9, spread: 0.02, color: '#b0ffff', blastRadius: 20, delay: 0.2, cost: 60 },
+    bomb: { name: "Bomb", type: SPELL_TYPES.PROJECTILE, mana: 40, damage: 60, speed: 0, spread: 0, color: '#333', blastRadius: 65, physics: true, delay: 1.0, cost: 50 },
+    triplicate: { name: "Triplicate", type: SPELL_TYPES.PROJECTILE, mana: 20, damage: 4, count: 3, speed: 8, spread: 0.3, color: '#ffaa00', delay: 0.15, cost: 80 },
+    digging_bolt: { name: "Digging Bolt", type: SPELL_TYPES.PROJECTILE, mana: 2, damage: 2, speed: 12, life: 4, spread: 0.05, color: '#aaa', digPower: 2, delay: -0.05, cost: 30 },
+    fireball: { name: "Fireball", type: SPELL_TYPES.PROJECTILE, mana: 35, damage: 15, speed: 5, spread: 0.1, color: '#ff4400', blastRadius: 35, delay: 0.3, cost: 70 },
+    sawblade: { name: "Sawblade", type: SPELL_TYPES.PROJECTILE, mana: 30, damage: 25, speed: 6, spread: 0.1, color: '#ddd', life: 120, bounce: true, physics: true, delay: 0.4, cost: 90 },
+    
+    // Modifiers
+    speed_up: { name: "Speed Up", type: SPELL_TYPES.MODIFIER, mana: 5, speedMod: 1.8, cost: 30 },
+    heavy_shot: { name: "Heavy Shot", type: SPELL_TYPES.MODIFIER, mana: 10, damageMod: 15, speedMod: 0.6, cost: 60 },
+    damage_plus: { name: "Damage +", type: SPELL_TYPES.MODIFIER, mana: 15, damageMod: 10, cost: 60 },
+    
+    // Multicasts
+    double_spell: { name: "Double Spell", type: SPELL_TYPES.MULTICAST, mana: 10, castCount: 2, cost: 100 }
+};
+
+// --- Engine Core ---
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let width, height;
+let camX = 0, camY = 0;
+let mouseX = 0, mouseY = 0;
+let worldMouseX = 0, worldMouseY = 0;
+
+// Game State
+let gameState = 'PLAYING';
+let level = 1;
+let frames = 0;
+
+// World Data
+let mapWidth = 200;
+let mapHeight = 150;
+let map = [];
+
+// Entities
+let player;
+let projectiles = [];
+let particles = [];
+let enemies = [];
+let items = [];
+let texts = [];
+let portals = [];
+
+// Input
+const keys = {};
+const mouse = { down: false };
+
+// --- Initialization ---
+
+function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+    ctx.imageSmoothingEnabled = false;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Input Handling ---
+
+window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === 'Tab' || e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        toggleInventory();
+    }
+    if (e.key.toLowerCase() === 'f') interact();
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+window.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = e.clientX - rect.left;
+    mouseY = e.clientY - rect.top;
+});
+window.addEventListener('mousedown', e => {
+    if (e.button === 0) mouse.down = true;
+    if (gameState === 'INVENTORY') handleInventoryClick(e);
+});
+window.addEventListener('mouseup', e => {
+    if (e.button === 0) mouse.down = false;
+});
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+// --- World Generation ---
+
+function initMap(w, h, type = 'CAVE') {
+    mapWidth = w;
+    mapHeight = h;
+    map = new Uint8Array(w * h).fill(0);
+
+    if (type === 'SHOP') {
+        // Brick Box
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                if (y < 5 || y > h - 5 || x < 5 || x > w - 5) setTile(x, y, 2);
+                else if (y === h - 15 && x > 20 && x < w - 20) setTile(x, y, 2);
+            }
+        }
+        return;
+    }
+
+    // Noise Fill - Lower threshold (0.40) means more air/open space
+    for (let i = 0; i < w * h; i++) {
+        if (Math.random() < 0.40) map[i] = 1;
+    }
+
+    // Cellular Automata Smoothing
+    for (let i = 0; i < 6; i++) {
+        const newMap = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                let neighbors = countNeighbors(x, y);
+                // Smoother rules for open caves
+                if (neighbors > 4) setTileRaw(newMap, x, y, 1);
+                else if (neighbors < 4) setTileRaw(newMap, x, y, 0);
+                else setTileRaw(newMap, x, y, getTile(x, y));
+            }
+        }
+        map = newMap;
+    }
+
+    // Border
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            if (x === 0 || x === w - 1 || y === 0 || y === h - 1) setTile(x, y, 2);
+        }
+    }
+}
+
+function countNeighbors(x, y) {
+    let count = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            let nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= mapWidth || ny >= mapHeight) count++;
+            else if (getTile(nx, ny) > 0) count++;
+        }
+    }
+    return count;
+}
+
+function getTile(x, y) {
+    if (x < 0 || x >= mapWidth || y < 0 || y >= mapHeight) return 2;
+    return map[y * mapWidth + x];
+}
+
+function setTile(x, y, v) {
+    if (x >= 0 && x < mapWidth && y >= 0 && y < mapHeight) map[y * mapWidth + x] = v;
+}
+function setTileRaw(arr, x, y, v) { arr[y * mapWidth + x] = v; }
+
+// --- Physics & Destruction ---
+
+function explode(cx, cy, radius, particleColor = '#555') {
+    const rSq = radius * radius;
+    const startX = Math.max(0, Math.floor(cx - radius));
+    const endX = Math.min(mapWidth, Math.ceil(cx + radius));
+    const startY = Math.max(0, Math.floor(cy - radius));
+    const endY = Math.min(mapHeight, Math.ceil(cy + radius));
+
+    camShake = Math.min(camShake + radius * 0.5, 20);
+
+    for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+            const dx = x - cx;
+            const dy = y - cy;
+            if (dx*dx + dy*dy <= rSq) {
+                if (getTile(x, y) === 1) { 
+                    setTile(x, y, 0);
+                    if (Math.random() < 0.2) createParticle(x * TILE_SIZE, y * TILE_SIZE, COLORS.rock, (Math.random()-0.5)*2, (Math.random()-0.5)*2);
+                }
+            }
+        }
+    }
+    
+    // Damage
+    const worldX = cx * TILE_SIZE;
+    const worldY = cy * TILE_SIZE;
+    const pixelRadius = radius * TILE_SIZE;
+    
+    enemies.forEach(e => {
+        const dist = Math.hypot(e.x - worldX, e.y - worldY);
+        if (dist < pixelRadius) e.takeDamage(50 * (1 - dist/pixelRadius));
+    });
+
+    const distPlayer = Math.hypot(player.x - worldX, player.y - worldY);
+    if (distPlayer < pixelRadius) {
+        player.takeDamage(20 * (1 - distPlayer/pixelRadius));
+        const angle = Math.atan2(player.y - worldY, player.x - worldX);
+        player.vx += Math.cos(angle) * 8;
+        player.vy += Math.sin(angle) * 8;
+    }
+}
+
+// --- Classes ---
+
+class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.width = 10;
+        this.height = 10;
+        this.grounded = false;
+    }
+
+    updatePhysics() {
+        this.vy += GRAVITY;
+        this.vx *= FRICTION;
+        if (this.vy > TERMINAL_VELOCITY) this.vy = TERMINAL_VELOCITY;
+
+        if (!this.checkCollision(this.x + this.vx, this.y)) this.x += this.vx;
+        else this.vx = 0;
+
+        this.grounded = false;
+        if (!this.checkCollision(this.x, this.y + this.vy)) {
+            this.y += this.vy;
+        } else {
+            if (this.vy > 0) this.grounded = true;
+            this.vy = 0;
+        }
+    }
+
+    checkCollision(nx, ny) {
+        const top = Math.floor(ny / TILE_SIZE);
+        const bottom = Math.floor((ny + this.height - 0.1) / TILE_SIZE);
+        const left = Math.floor(nx / TILE_SIZE);
+        const right = Math.floor((nx + this.width - 0.1) / TILE_SIZE);
+
+        for (let y = top; y <= bottom; y++) {
+            for (let x = left; x <= right; x++) {
+                if (getTile(x, y) > 0) return true;
+            }
+        }
+        return false;
+    }
+}
+
+class Player extends Entity {
+    constructor(x, y) {
+        super(x, y);
+        this.color = COLORS.player;
+        this.maxHealth = 100;
+        this.health = 100;
+        this.gold = 0;
+        this.jetpackFuel = 100;
+        this.maxJetpack = 100;
+        this.wands = [];
+        this.activeWandIndex = 0;
+        this.inventory = [];
+        
+        // Starter Wand (Spark Bolt)
+        let w1 = new Wand({ name: "Starter Wand", castDelay: 0.1, rechargeTime: 0.5, manaMax: 100, manaCharge: 30, capacity: 3, spread: 0.05 });
+        w1.slots[0] = SPELL_DB.spark_bolt;
+        this.addWand(w1);
+        
+        // Bomb Wand
+        let w2 = new Wand({ name: "Bomb Wand", castDelay: 0.5, rechargeTime: 1.5, manaMax: 200, manaCharge: 50, capacity: 2, shuffle: false });
+        w2.slots[0] = SPELL_DB.bomb;
+        this.addWand(w2);
+    }
+
+    addWand(wand) { if (this.wands.length < 4) this.wands.push(wand); }
+
+    update() {
+        if (this.health <= 0) return;
+
+        if (keys['a']) this.vx -= 0.5;
+        if (keys['d']) this.vx += 0.5;
+        
+        if (keys['w'] || keys[' ']) {
+            if (this.jetpackFuel > 0) {
+                this.vy -= JETPACK_FORCE;
+                this.jetpackFuel -= 1.5;
+                if (frames % 3 === 0) createParticle(this.x + 5, this.y + 10, '#fff', (Math.random()-0.5), 2);
+            }
+        } else if (this.grounded) {
+            this.jetpackFuel = Math.min(this.jetpackFuel + 5, this.maxJetpack);
+        }
+
+        if (keys['1'] && this.wands[0]) this.activeWandIndex = 0;
+        if (keys['2'] && this.wands[1]) this.activeWandIndex = 1;
+        if (keys['3'] && this.wands[2]) this.activeWandIndex = 2;
+        if (keys['4'] && this.wands[3]) this.activeWandIndex = 3;
+
+        this.updatePhysics();
+
+        const activeWand = this.wands[this.activeWandIndex];
+        if (activeWand) {
+            activeWand.update();
+            if (mouse.down) activeWand.trigger();
+        }
+        
+        if (this.y > mapHeight * TILE_SIZE + 100) this.takeDamage(1000);
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(Math.floor(this.x), Math.floor(this.y), this.width, this.height);
+        
+        // Wand
+        const activeWand = this.wands[this.activeWandIndex];
+        if (activeWand) {
+            const cx = this.x + 5;
+            const cy = this.y + 5;
+            const angle = Math.atan2(worldMouseY - cy, worldMouseX - cx);
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(angle);
+            ctx.fillStyle = '#8b4513';
+            ctx.fillRect(0, -2, 12, 4);
+            ctx.fillStyle = '#ff0';
+            ctx.fillRect(10, -2, 2, 4);
+            ctx.restore();
+        }
+
+        ctx.fillStyle = '#000';
+        ctx.fillRect(this.x, this.y - 6, this.width, 3);
+        ctx.fillStyle = '#0f0';
+        ctx.fillRect(this.x, this.y - 6, (this.jetpackFuel/this.maxJetpack) * this.width, 3);
+    }
+
+    takeDamage(amt) {
+        this.health -= amt;
+        addFloatingText(Math.round(amt), this.x, this.y, '#f00');
+        if (this.health <= 0) {
+            this.health = 0;
+            for(let i=0; i<30; i++) createParticle(this.x, this.y, COLORS.blood, (Math.random()-0.5)*5, (Math.random()-0.5)*5);
+            setTimeout(() => gameState = 'GAME_OVER', 1000);
+        }
+        document.getElementById('health-hud').innerText = `HP: ${Math.round(this.health)}`;
+    }
+}
+
+// --- Enhanced Wand Logic ---
+
+class Wand {
+    constructor(stats) {
+        this.stats = stats;
+        this.slots = new Array(stats.capacity).fill(null);
+        this.currentMana = stats.manaMax;
+        this.castDelayTimer = 0;
+        this.rechargeTimer = 0;
+        this.slotIndex = 0;
+    }
+
+    update() {
+        if (this.currentMana < this.stats.manaMax) {
+            this.currentMana = Math.min(this.currentMana + this.stats.manaCharge / 60, this.stats.manaMax);
+        }
+        if (this.castDelayTimer > 0) this.castDelayTimer -= 1/60;
+        if (this.rechargeTimer > 0) this.rechargeTimer -= 1/60;
+    }
+
+    trigger() {
+        if (this.rechargeTimer > 0 || this.castDelayTimer > 0) return;
+
+        // "Deck" Draw Logic
+        let spellsToCast = [];
+        let totalManaCost = 0;
+        let totalDelay = this.stats.castDelay;
+        let accumulatedMods = { speedMod: 1, damageMod: 0, spreadMod: 0 };
+        
+        // Helper to get next spell based on shuffle/linear
+        const getNextSpell = () => {
+            let s = this.slots[this.slotIndex];
+            this.slotIndex = (this.slotIndex + 1) % this.slots.length;
+            if (this.slotIndex === 0) this.rechargeTimer = this.stats.rechargeTime; // Loop
+            return s;
+        };
+
+        // We process spells in a "Cast Block"
+        // 1. Process Modifiers
+        // 2. Process Projectiles
+        // 3. Handle Multicasts
+        
+        let spellsToProcess = 1; // Default 1 spell
+        let processedCount = 0;
+        let infiniteLoopGuard = 0;
+
+        while(spellsToProcess > 0 && infiniteLoopGuard < this.slots.length * 2) {
+            infiniteLoopGuard++;
+            
+            // Check mana before drawing
+            // A true Noita simulation would draw first, then fail cast, but we'll peek
+            let spell = this.slots[this.slotIndex];
+            
+            if (!spell) {
+                // Skip empty slot
+                this.slotIndex = (this.slotIndex + 1) % this.slots.length;
+                if(this.slotIndex === 0) this.rechargeTimer = this.stats.rechargeTime;
+                continue; 
+            }
+
+            if (this.currentMana < spell.mana + totalManaCost) {
+                addFloatingText("No Mana", player.x, player.y - 20, '#aaf');
+                break; // Stop casting chain
+            }
+
+            // Commit to casting this spell
+            spell = getNextSpell(); // Advance index
+            totalManaCost += spell.mana;
+            totalDelay += (spell.delay || 0);
+
+            if (spell.type === SPELL_TYPES.MODIFIER) {
+                accumulatedMods.speedMod *= (spell.speedMod || 1);
+                accumulatedMods.damageMod += (spell.damageMod || 0);
+                // Modifiers don't consume "spellsToProcess", they just add to the current block
+            } else if (spell.type === SPELL_TYPES.MULTICAST) {
+                spellsToProcess += (spell.castCount || 1);
+                // Multicast itself is a spell, so we used 1 'process' token, but added N
+                spellsToProcess--; 
+            } else if (spell.type === SPELL_TYPES.PROJECTILE) {
+                // Create cast data
+                spellsToCast.push({
+                    def: spell,
+                    mods: { ...accumulatedMods } // Copy current mods
+                });
+                spellsToProcess--;
+            }
+        }
+
+        if (spellsToCast.length > 0) {
+            this.currentMana -= totalManaCost;
+            this.castDelayTimer = totalDelay;
+
+            // Fire all projectiles in the block
+            spellsToCast.forEach(castData => {
+                this.fireProjectile(castData.def, castData.mods);
+            });
+            
+            // Recoil
+            const cx = player.x + 5;
+            const cy = player.y + 5;
+            const angle = Math.atan2(worldMouseY - cy, worldMouseX - cx);
+            player.vx -= Math.cos(angle) * (spellsToCast.length * 1.5);
+            player.vy -= Math.sin(angle) * (spellsToCast.length * 1.5);
+        }
+    }
+
+    fireProjectile(spell, mods) {
+        const cx = player.x + 5;
+        const cy = player.y + 5;
+        let angle = Math.atan2(worldMouseY - cy, worldMouseX - cx);
+        
+        // Base Wand Spread + Spell Spread
+        const totalSpread = (spell.spread || 0) + (this.stats.spread || 0);
+        angle += (Math.random() - 0.5) * totalSpread;
+
+        const count = spell.count || 1;
+        
+        for(let i=0; i<count; i++) {
+            let subAngle = angle + (Math.random() - 0.5) * (spell.spread || 0);
+            
+            // Create Projectile with Mods
+            const p = new Projectile(cx, cy, subAngle, spell, mods);
+            projectiles.push(p);
+        }
+    }
+}
+
+class Projectile {
+    constructor(x, y, angle, spell, mods) {
+        this.x = x;
+        this.y = y;
+        this.spell = spell;
+        
+        // Apply Mods
+        let baseSpeed = (spell.speed || 5) * (mods.speedMod || 1);
+        this.damage = (spell.damage + (mods.damageMod || 0));
+        
+        this.vx = Math.cos(angle) * baseSpeed;
+        this.vy = Math.sin(angle) * baseSpeed;
+        this.life = spell.life || 60;
+        this.color = spell.color || '#fff';
+        this.bounceCount = 0;
+        
+        if (spell.name === "Bomb") {
+            this.vx *= 0.5;
+            this.vy *= 0.5;
+            this.gravity = true;
+        }
+        if (spell.name === "Sawblade") {
+            this.gravity = true;
+            this.vx *= 1.5;
+        }
+    }
+
+    update() {
+        this.life--;
+        
+        if (this.gravity || this.spell.physics) {
+            this.vy += GRAVITY;
+            this.vx *= 0.99;
+        }
+
+        // Sub-stepping for high speed
+        const speed = Math.hypot(this.vx, this.vy);
+        const steps = Math.ceil(speed / (TILE_SIZE/2));
+        const dx = this.vx / steps;
+        const dy = this.vy / steps;
+
+        for (let i = 0; i < steps; i++) {
+            this.x += dx;
+            this.y += dy;
+
+            // Wall Collision
+            const tx = Math.floor(this.x / TILE_SIZE);
+            const ty = Math.floor(this.y / TILE_SIZE);
+            
+            if (getTile(tx, ty) > 0) {
+                if (this.spell.bounce && this.bounceCount < 5) {
+                    // Simple bounce logic
+                    // Determine normal roughly by checking previous position
+                    const prevX = this.x - dx;
+                    const prevY = this.y - dy;
+                    const ptx = Math.floor(prevX / TILE_SIZE);
+                    const pty = Math.floor(prevY / TILE_SIZE);
+                    
+                    if (ptx !== tx) this.vx = -this.vx * 0.8;
+                    if (pty !== ty) this.vy = -this.vy * 0.8;
+                    
+                    this.bounceCount++;
+                    createParticle(this.x, this.y, '#fff', 0, 0, 5);
+                    return; // Don't destroy yet
+                } else {
+                    this.hit();
+                    return;
+                }
+            }
+
+            // Entity Collision (Enemies)
+            for (let e of enemies) {
+                if (Math.hypot(e.x - this.x, e.y - this.y) < e.width + 5) {
+                    e.takeDamage(this.damage);
+                    this.hit();
+                    return;
+                }
+            }
+            
+            // Player Self-Damage (Sawblades/Bombs)
+            if (this.spell.name === "Sawblade" || this.spell.blastRadius) {
+                // Safety timer for sawblade so you don't instant die
+                if (this.spell.name === "Sawblade" && this.life > 100) continue; 
+                
+                if (Math.hypot(player.x - this.x, player.y - this.y) < 10) {
+                    player.takeDamage(10);
+                    this.hit();
+                    return;
+                }
+            }
+        }
+
+        if (this.life <= 0) this.hit();
+        if (Math.random() < 0.3) createParticle(this.x, this.y, this.color, 0, 0, 10);
+    }
+
+    hit() {
+        this.life = 0;
+        if (this.spell.digPower) explode(this.x/TILE_SIZE, this.y/TILE_SIZE, this.spell.digPower);
+        else if (this.spell.blastRadius) {
+            explode(this.x/TILE_SIZE, this.y/TILE_SIZE, this.spell.blastRadius/TILE_SIZE);
+            for(let i=0; i<20; i++) createParticle(this.x, this.y, '#f90', (Math.random()-0.5)*5, (Math.random()-0.5)*5, 40);
+        } else {
+             createParticle(this.x, this.y, this.color, -this.vx*0.2, -this.vy*0.2);
+        }
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = this.color;
+        if (this.spell.name === "Sawblade") {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 4, 0, Math.PI*2);
+            ctx.strokeStyle = '#fff';
+            ctx.stroke();
+        } else if (this.spell.name === "Fireball") {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 3, 0, Math.PI*2);
+            ctx.fill();
+        } else {
+            ctx.fillRect(this.x-1, this.y-1, 3, 3);
+        }
+    }
+}
+
+// --- Enemies ---
+
+const ENEMY_TYPES = {
+    BAT: 'BAT',
+    SNIPER: 'SNIPER',
+    TANK: 'TANK'
+};
+
+class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y);
+        this.type = type;
+        this.timer = 0;
+        
+        if (type === ENEMY_TYPES.BAT) {
+            this.health = 20;
+            this.color = COLORS.enemy_bat;
+            this.width = 10;
+        } else if (type === ENEMY_TYPES.SNIPER) {
+            this.health = 40;
+            this.color = COLORS.enemy_sniper;
+            this.width = 10;
+        } else if (type === ENEMY_TYPES.TANK) {
+            this.health = 120;
+            this.color = COLORS.enemy_tank;
+            this.width = 18;
+            this.height = 18;
+        }
+    }
+
+    update() {
+        const dx = player.x - this.x;
+        const dy = player.y - this.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (this.type === ENEMY_TYPES.BAT) {
+            // BAT AI: Fly towards player
+            if (dist < 300) {
+                this.vx += (dx / dist) * 0.15;
+                this.vy += (dy / dist) * 0.15;
+            }
+            this.vx *= 0.95;
+            this.vy *= 0.95;
+            
+            // Check move
+            if (this.checkCollision(this.x + this.vx, this.y)) this.vx *= -0.8;
+            this.x += this.vx;
+            if (this.checkCollision(this.x, this.y + this.vy)) this.vy *= -0.8;
+            this.y += this.vy;
+            
+        } else if (this.type === ENEMY_TYPES.SNIPER) {
+            // SNIPER AI: Stationary, shoots
+            this.updatePhysics();
+            
+            if (dist < 250 && dist > 20) {
+                // Line of sight check (simple)
+                this.timer++;
+                // Laser sight
+                if (Math.random() < 0.1) createParticle(this.x, this.y, 'rgba(255,0,0,0.5)', dx/dist * 5, dy/dist * 5, 5);
+
+                if (this.timer > 120) {
+                    this.timer = 0;
+                    // Shoot
+                    const angle = Math.atan2(dy, dx);
+                    // Enemy projectile (Basic implementation)
+                    const p = new Projectile(this.x, this.y, angle, { speed: 4, damage: 10, life: 100, color: '#f0f', name: 'EnemyBolt' }, {});
+                    // Make it not hurt enemies
+                    // (Requires Refactor to separate layers, for now simpler to just let it exist)
+                    projectiles.push(p); 
+                }
+            }
+
+        } else if (this.type === ENEMY_TYPES.TANK) {
+            // TANK AI: Walks towards player, jumps gaps
+            this.vy += GRAVITY;
+            this.vx *= 0.8; // High friction
+            
+            if (dist < 200) {
+                const dir = dx > 0 ? 1 : -1;
+                this.vx += dir * 0.2;
+                
+                // Jump if wall ahead
+                if (this.grounded && this.checkCollision(this.x + dir * 5, this.y)) {
+                    this.vy = -3;
+                }
+            }
+            
+            // Physics move
+            if (!this.checkCollision(this.x + this.vx, this.y)) this.x += this.vx;
+            if (!this.checkCollision(this.x, this.y + this.vy)) this.y += this.vy;
+            else { if (this.vy > 0) this.grounded = true; this.vy = 0; }
+        }
+
+        // Damage Player
+        if (dist < this.width + 5 && frames % 60 === 0) {
+            player.takeDamage(this.type === ENEMY_TYPES.TANK ? 25 : 10);
+            this.vx = -this.vx * 2;
+            this.vy = -this.vy * 2;
+        }
+    }
+
+    takeDamage(dmg) {
+        this.health -= dmg;
+        this.vx += (Math.random()-0.5)*2;
+        this.vy -= 1;
+        addFloatingText(Math.round(dmg), this.x, this.y, '#fff');
+        createParticle(this.x, this.y, this.color, (Math.random()-0.5)*2, -2);
+        
+        if (this.health <= 0) {
+            items.push(new Item(this.x, this.y, 'GOLD', 10 + Math.floor(Math.random()*20)));
+        }
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = this.color;
+        
+        if (this.type === ENEMY_TYPES.BAT) {
+            ctx.beginPath();
+            ctx.arc(this.x + 5, this.y + 5, 5, 0, Math.PI*2);
+            ctx.fill();
+            // Wings
+            const wingOffset = Math.sin(frames * 0.2) * 3;
+            ctx.fillStyle = '#555';
+            ctx.fillRect(this.x - 5, this.y + 2 - wingOffset, 5, 3);
+            ctx.fillRect(this.x + 10, this.y + 2 - wingOffset, 5, 3);
+        } else if (this.type === ENEMY_TYPES.SNIPER) {
+            ctx.fillRect(this.x, this.y, 10, 10);
+            ctx.fillStyle = '#f00'; // Eye
+            ctx.fillRect(this.x + 2, this.y + 2, 6, 2);
+        } else if (this.type === ENEMY_TYPES.TANK) {
+            ctx.fillRect(this.x, this.y, 18, 18);
+            ctx.fillStyle = '#222';
+            ctx.fillRect(this.x - 2, this.y + 14, 22, 4); // Treads
+        }
+    }
+}
+
+// --- Items & Drops ---
+
+class Item extends Entity {
+    constructor(x, y, type, data) {
+        super(x, y);
+        this.type = type;
+        this.data = data;
+        this.price = 0;
+    }
+    update() { this.updatePhysics(); }
+    draw(ctx) {
+        if (this.type === 'GOLD') {
+            ctx.fillStyle = COLORS.gold;
+            ctx.beginPath();
+            ctx.arc(this.x+5, this.y+5, 3, 0, Math.PI*2);
+            ctx.fill();
+        } else if (this.type === 'SPELL') {
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(this.x, this.y, 10, 10);
+            ctx.fillStyle = this.data.color || '#f0f';
+            ctx.fillRect(this.x+2, this.y+2, 6, 6);
+        } else if (this.type === 'WAND') {
+            ctx.fillStyle = '#8b4513';
+            ctx.fillRect(this.x, this.y, 14, 4);
+            ctx.fillStyle = '#ff0';
+            ctx.fillRect(this.x+12, this.y, 2, 4);
+        }
+        // Price text handled in main draw() now
+    }
+}
+
+class Portal extends Entity {
+    constructor(x, y) { super(x, y); this.width = 20; this.height = 30; }
+    update() {}
+    draw(ctx) {
+        ctx.fillStyle = `hsl(${frames * 5}, 100%, 50%)`;
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+    }
+}
+
+// --- Utils ---
+
+function createParticle(x, y, color, vx, vy, life=30) {
+    particles.push({x, y, color, vx, vy, life, maxLife: life});
+}
+
+function addFloatingText(text, x, y, color) {
+    texts.push({text, x, y, color, life: 60});
+}
+
+function interact() {
+    // Portals
+    for (let p of portals) {
+        if (Math.hypot(p.x - player.x, p.y - player.y) < 30) {
+            enterPortal();
+            return;
+        }
+    }
+    // Items
+    for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (Math.hypot(item.x - player.x, item.y - player.y) < 20) {
+            if (item.type === 'GOLD') continue; // Gold handled automatically now
+
+            if (item.price > 0) {
+                if (player.gold >= item.price) {
+                    player.gold -= item.price;
+                    item.price = 0;
+                } else {
+                    addFloatingText("Too Expensive!", item.x, item.y - 20, '#f00');
+                    return;
+                }
+            }
+             if (item.type === 'SPELL') {
+                player.inventory.push(item.data);
+                items.splice(i, 1);
+                addFloatingText("Spell Get!", player.x, player.y - 10, '#0ff');
+            } else if (item.type === 'WAND') {
+                if (player.wands.length < 4) {
+                    player.addWand(item.data);
+                    items.splice(i, 1);
+                    addFloatingText("Wand Get!", player.x, player.y - 10, '#0ff');
+                } else addFloatingText("Full", player.x, player.y - 10, '#f00');
+            }
+        }
+    }
+}
+
+function enterPortal() {
+    if (level % 2 !== 0) { level++; loadLevel('SHOP'); addFloatingText("Holy Mountain", player.x, player.y-30, "#fff"); }
+    else { level++; loadLevel('CAVE'); }
+}
+
+function loadLevel(type) {
+    projectiles = []; particles = []; enemies = []; items = []; portals = [];
+    
+    let mapW = 220, mapH = 150;
+    
+    if (type === 'SHOP') {
+        initMap(100, 60, 'SHOP');
+        player.x = 200; player.y = 200;
+        player.health = player.maxHealth;
+        addFloatingText("HP Restored", player.x, player.y, "#0f0");
+        
+        // Items
+        let shopX = 300;
+        for(let i=0; i<4; i++) {
+            const keys = Object.keys(SPELL_DB);
+            const randomSpell = SPELL_DB[keys[ Math.floor(Math.random() * keys.length) ]];
+            const item = new Item(shopX, 350, 'SPELL', randomSpell);
+            item.price = randomSpell.cost + level * 10;
+            items.push(item);
+            shopX += 40;
+        }
+        
+        const wand = new Wand({
+            name: "Wand Tier " + level,
+            castDelay: Math.max(0.05, 0.5 - level * 0.05),
+            rechargeTime: Math.max(0.2, 1.0 - level * 0.1),
+            manaMax: 100 + level*100,
+            manaCharge: 20 + level*20,
+            capacity: 2 + Math.floor(Math.random()*4)
+        });
+        wand.slots[0] = SPELL_DB.magic_missile;
+        const wandItem = new Item(shopX + 40, 350, 'WAND', wand);
+        wandItem.price = 200 + level*100;
+        items.push(wandItem);
+
+        portals.push(new Portal(600, 340));
+    } else {
+        initMap(mapW, mapH, 'CAVE');
+        
+        // Spawn Player
+        let foundSpawn = false;
+        while(!foundSpawn) {
+            let rx = Math.floor(Math.random() * mapWidth);
+            let ry = Math.floor(Math.random() * 20) + 10;
+            if(getTile(rx, ry) === 0) {
+                player.x = rx * TILE_SIZE; player.y = ry * TILE_SIZE;
+                explode(rx, ry, 3); // clear space
+                foundSpawn = true;
+            }
+        }
+
+        // Spawn Enemies
+        const enemyCount = 12 + level * 3;
+        for(let i=0; i<enemyCount; i++) {
+            let ex = Math.random() * mapW * TILE_SIZE;
+            let ey = Math.random() * mapH * TILE_SIZE;
+            if (getTile(Math.floor(ex/TILE_SIZE), Math.floor(ey/TILE_SIZE)) === 0) {
+                // Random Type
+                const rand = Math.random();
+                let t = ENEMY_TYPES.BAT;
+                if (rand > 0.6) t = ENEMY_TYPES.SNIPER;
+                if (rand > 0.85) t = ENEMY_TYPES.TANK;
+                enemies.push(new Enemy(ex, ey, t));
+            }
+        }
+
+        // Exit
+        let foundExit = false;
+        while(!foundExit) {
+            let rx = Math.floor(Math.random() * mapWidth);
+            let ry = mapHeight - 10;
+            if(getTile(rx, ry) === 0) {
+                portals.push(new Portal(rx * TILE_SIZE, ry * TILE_SIZE));
+                explode(rx, ry, 5);
+                foundExit = true;
+            }
+        }
+    }
+}
+
+// --- Main Loop ---
+
+let camShake = 0;
+
+function update() {
+    if (gameState === 'PLAYING') {
+        player.update();
+        
+        projectiles = projectiles.filter(p => p.life > 0);
+        projectiles.forEach(p => p.update());
+        
+        enemies = enemies.filter(e => e.health > 0);
+        enemies.forEach(e => e.update());
+
+        // Update Items and Auto-Collect Gold
+        for (let i = items.length - 1; i >= 0; i--) {
+            const item = items[i];
+            
+            // Gold Magnetism
+            if (item.type === 'GOLD') {
+                const dist = Math.hypot(item.x - player.x, item.y - player.y);
+                if (dist < 50) {
+                    item.x += (player.x - item.x) * 0.15;
+                    item.y += (player.y - item.y) * 0.15;
+                    if (dist < 10) {
+                        player.gold += item.data;
+                        items.splice(i, 1);
+                        addFloatingText(`+$${item.data}`, player.x, player.y - 10, '#ff0');
+                    }
+                }
+            }
+            
+            item.update();
+        }
+        
+        particles.forEach(p => {
+            p.x += p.vx; p.y += p.vy; p.vy += 0.1; p.life--;
+            if (getTile(Math.floor(p.x/TILE_SIZE), Math.floor(p.y/TILE_SIZE)) > 0) {
+                p.vx *= 0.5; p.vy *= -0.5;
+            }
+        });
+        particles = particles.filter(p => p.life > 0);
+
+        texts = texts.filter(t => t.life > 0);
+        texts.forEach(t => { t.y -= 0.5; t.life--; });
+
+        // Camera
+        let targetCamX = player.x - width / 2;
+        let targetCamY = player.y - height / 2;
+        if (camShake > 0) {
+            targetCamX += (Math.random() - 0.5) * camShake;
+            targetCamY += (Math.random() - 0.5) * camShake;
+            camShake *= 0.9;
+            if (camShake < 0.5) camShake = 0;
+        }
+        camX += (targetCamX - camX) * 0.1;
+        camY += (targetCamY - camY) * 0.1;
+
+        document.getElementById('health-hud').innerText = `HP: ${Math.round(player.health)}`;
+        document.getElementById('gold-hud').innerText = `$${player.gold}`;
+        document.getElementById('depth-hud').innerText = `Lvl: ${level}`;
+        const mana = player.wands[player.activeWandIndex] ? player.wands[player.activeWandIndex].currentMana : 0;
+        document.getElementById('mana-hud').innerText = `Mana: ${Math.round(mana)}`;
+    }
+    
+    worldMouseX = mouseX + camX;
+    worldMouseY = mouseY + camY;
+    frames++;
+}
+
+function draw() {
+    ctx.fillStyle = COLORS.background;
+    ctx.fillRect(0, 0, width, height);
+    
+    ctx.save();
+    ctx.translate(-Math.floor(camX), -Math.floor(camY));
+
+    // Draw Map
+    const startCol = Math.floor(camX / TILE_SIZE);
+    const endCol = startCol + (width / TILE_SIZE) + 1;
+    const startRow = Math.floor(camY / TILE_SIZE);
+    const endRow = startRow + (height / TILE_SIZE) + 1;
+
+    for (let y = startRow; y <= endRow; y++) {
+        for (let x = startCol; x <= endCol; x++) {
+            let t = getTile(x, y);
+            if (t !== 0) {
+                if (t === 1) ctx.fillStyle = COLORS.rock;
+                else if (t === 2) ctx.fillStyle = COLORS.rock_light;
+                if ((x+y)%2 === 0) ctx.globalAlpha = 0.9;
+                ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                ctx.globalAlpha = 1.0;
+            }
+        }
+    }
+
+    portals.forEach(p => p.draw(ctx));
+    items.forEach(i => i.draw(ctx));
+    
+    // Draw Item Names (Tooltips)
+    ctx.textAlign = 'center';
+    items.forEach(i => {
+        if (i.type === 'GOLD') return; // Don't show tooltip for gold
+        
+        const dist = Math.hypot(i.x - player.x, i.y - player.y);
+        if (dist < 40) {
+            ctx.fillStyle = '#fff';
+            ctx.font = "bold 10px monospace";
+            
+            // Name
+            let name = "";
+            if (i.type === 'SPELL') name = i.data.name;
+            else if (i.type === 'WAND') name = i.data.stats.name;
+            
+            ctx.fillText(name, i.x + 5, i.y - 20);
+            
+            // Price / Action
+            if (i.price > 0) {
+                 ctx.fillStyle = '#ffd700';
+                 ctx.fillText(`$${i.price}`, i.x + 5, i.y - 10);
+            } else {
+                 ctx.fillStyle = '#ccc';
+                 ctx.fillText(`[F]`, i.x + 5, i.y - 10);
+            }
+        }
+    });
+
+    enemies.forEach(e => e.draw(ctx));
+    player.draw(ctx);
+    projectiles.forEach(p => p.draw(ctx));
+    
+    particles.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 2, 2);
+    });
+
+    texts.forEach(t => {
+        ctx.fillStyle = t.color;
+        ctx.font = "bold 14px Arial";
+        ctx.fillText(t.text, t.x, t.y);
+    });
+
+    ctx.restore();
+
+    if (gameState === 'INVENTORY') drawInventory();
+    
+    if (gameState === 'GAME_OVER') {
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = '#fff';
+        ctx.font = '40px Courier New';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', width/2, height/2 - 20);
+        ctx.font = '20px Courier New';
+        ctx.fillText('Press F5 to restart', width/2, height/2 + 20);
+    }
+}
+
+// --- Inventory UI ---
+let heldItem = null;
+
+function toggleInventory() {
+    if (gameState === 'PLAYING') gameState = 'INVENTORY';
+    else if (gameState === 'INVENTORY') {
+        gameState = 'PLAYING';
+        heldItem = null;
+    }
+}
+
+function drawInventory() {
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.fillRect(50, 50, width - 100, height - 100);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#fff';
+    ctx.font = '24px Courier New';
+    ctx.fillText("Wand Crafting", 70, 90);
+
+    let startY = 130;
+    player.wands.forEach((wand, wIdx) => {
+        ctx.fillStyle = '#4a3b32';
+        ctx.fillRect(70, startY, width - 140, 80);
+        
+        ctx.font = '12px Courier New';
+        ctx.fillStyle = '#ccc';
+        ctx.fillText(`${wand.stats.name}`, 80, startY + 20);
+        ctx.fillText(`C: ${wand.stats.castDelay.toFixed(2)}s | R: ${wand.stats.rechargeTime.toFixed(2)}s | M: ${Math.floor(wand.currentMana)}/${wand.stats.manaMax}`, 80, startY + 40);
+
+        for (let i = 0; i < wand.stats.capacity; i++) {
+            const sx = 300 + i * 50;
+            const sy = startY + 20;
+            ctx.fillStyle = '#222';
+            ctx.fillRect(sx, sy, 40, 40);
+            ctx.strokeStyle = '#666';
+            ctx.strokeRect(sx, sy, 40, 40);
+            if (wand.slots[i]) drawSpellIcon(wand.slots[i], sx, sy);
+        }
+        startY += 90;
+    });
+
+    const invY = height - 150;
+    ctx.fillStyle = '#222';
+    ctx.fillRect(70, invY, width - 140, 80);
+    ctx.fillText("Inventory", 70, invY - 10);
+    
+    for (let i = 0; i < 14; i++) {
+        const sx = 80 + i * 50;
+        const sy = invY + 20;
+        ctx.strokeStyle = '#666';
+        ctx.strokeRect(sx, sy, 40, 40);
+        if (player.inventory[i]) drawSpellIcon(player.inventory[i], sx, sy);
+    }
+
+    if (heldItem) drawSpellIcon(heldItem.spell, mouseX - 20, mouseY - 20, true);
+}
+
+function drawSpellIcon(spell, x, y, drag = false) {
+    if (heldItem && !drag && heldItem.spell === spell) ctx.globalAlpha = 0.5;
+    ctx.fillStyle = spell.color;
+    ctx.fillRect(x + 5, y + 5, 30, 30);
+    ctx.fillStyle = '#000';
+    ctx.font = '8px Arial';
+    ctx.fillText(spell.name.substring(0,6), x + 6, y + 15);
+    ctx.fillText(spell.type, x + 6, y + 25);
+    if(spell.mana) {
+        ctx.fillStyle = '#0ff';
+        ctx.fillRect(x, y+35, spell.mana, 2);
+    }
+    ctx.globalAlpha = 1.0;
+}
+
+function handleInventoryClick(e) {
+    let startY = 130;
+    for (let wIdx = 0; wIdx < player.wands.length; wIdx++) {
+        const wand = player.wands[wIdx];
+        for (let sIdx = 0; sIdx < wand.stats.capacity; sIdx++) {
+            const sx = 300 + sIdx * 50;
+            const sy = startY + 20;
+            if (mouseX >= sx && mouseX <= sx + 40 && mouseY >= sy && mouseY <= sy + 40) {
+                handleSlotClick('WAND', wIdx, sIdx);
+                return;
+            }
+        }
+        startY += 90;
+    }
+    const invY = height - 150;
+    for (let i = 0; i < 14; i++) {
+        const sx = 80 + i * 50;
+        const sy = invY + 20;
+        if (mouseX >= sx && mouseX <= sx + 40 && mouseY >= sy && mouseY <= sy + 40) {
+            handleSlotClick('INV', 0, i);
+            return;
+        }
+    }
+}
+
+function handleSlotClick(location, containerIndex, slotIndex) {
+    let clickedSpell = null;
+    let container = null;
+    if (location === 'WAND') container = player.wands[containerIndex].slots;
+    else container = player.inventory;
+    clickedSpell = container[slotIndex];
+
+    if (!heldItem) {
+        if (clickedSpell) heldItem = { location, containerIndex, slotIndex, spell: clickedSpell };
+    } else {
+        let oldContainer = heldItem.location === 'WAND' ? player.wands[heldItem.containerIndex].slots : player.inventory;
+        if (heldItem.location === location && heldItem.containerIndex === containerIndex && heldItem.slotIndex === slotIndex) {
+            heldItem = null;
+            return;
+        }
+        oldContainer[heldItem.slotIndex] = clickedSpell;
+        container[slotIndex] = heldItem.spell;
+        heldItem = null;
+    }
+}
+
+// --- Start ---
+player = new Player(100, 100);
+loadLevel('CAVE');
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+
+</script>
+</body>
+</html>
