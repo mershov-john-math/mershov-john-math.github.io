@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geo-Deep: Multi-Dimensional</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050505;
+            overflow: hidden;
+            font-family: 'Press Start 2P', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0,0,0,0.8);
+            border: 4px solid #444;
+            width: 800px;
+            height: 600px;
+        }
+
+        canvas {
+            display: block;
+            background-color: #000;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+            z-index: 5;
+        }
+
+        .hud-text {
+            text-shadow: 2px 2px 0 #000;
+            font-size: 14px;
+        }
+
+        #layer-indicator {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 20px;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 1s;
+            text-shadow: 3px 3px 0 #000;
+            color: #fff;
+            background: rgba(0,0,0,0.7);
+            padding: 15px 30px;
+            border-radius: 20px;
+            border: 2px solid #fff;
+            z-index: 6;
+        }
+
+        #start-screen, #game-over-screen, #win-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(10, 10, 15, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            pointer-events: auto;
+            z-index: 10;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        button {
+            margin-top: 15px;
+            padding: 15px 25px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 14px;
+            background: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-bottom: 4px solid #2980b9;
+            transition: transform 0.1s;
+            width: 250px;
+        }
+
+        button.lvl2 {
+            background: #9b59b6;
+            border-bottom: 4px solid #8e44ad;
+        }
+
+        button:active {
+            transform: translateY(2px);
+            border-bottom: 2px solid #2980b9;
+        }
+
+        .controls-hint {
+            margin-top: 30px;
+            font-size: 10px;
+            color: #777;
+            line-height: 1.8;
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            text-shadow: 4px 4px 0 #000;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        
+        <div id="ui-layer">
+            <div class="hud-text">STATUS: <span id="status-display">NORMAL</span></div>
+            <div class="hud-text" id="depth-display">DEPTH: 0m</div>
+        </div>
+
+        <div id="layer-indicator">ZONE: START</div>
+
+        <div id="start-screen">
+            <h1 style="color: #4cd137;">GEO-DEEP</h1>
+            <p style="color:#aaa; font-size:12px; margin-bottom:20px;">Select Mission Profile</p>
+            
+            <button onclick="startGame(1)">LVL 1: EARTH CORE<br><span style="font-size:9px">(Classic Mode)</span></button>
+            <button class="lvl2" onclick="startGame(2)">LVL 2: COSMIC VOID<br><span style="font-size:9px">(20 Layers / Expert)</span></button>
+
+            <div class="controls-hint">
+                ARROWS / WASD to Move<br>
+                SPACE to Jump (Double Jump active)<br>
+                R to Restart Instant
+            </div>
+        </div>
+
+        <div id="game-over-screen" class="hidden">
+            <h1 style="color: #e74c3c;">SIGNAL LOST</h1>
+            <p id="death-reason" style="margin-bottom:20px; font-size: 12px; color: #aaa;">...</p>
+            <button onclick="showStartScreen()">RETURN TO BASE</button>
+            <button onclick="retryLevel()">QUICK RETRY</button>
+        </div>
+
+        <div id="win-screen" class="hidden">
+            <h1 style="color: #f1c40f;">OBJECTIVE COMPLETE</h1>
+            <p style="margin-bottom:20px;">The artifact has been secured.</p>
+            <button onclick="showStartScreen()">NEW MISSION</button>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // UI Elements
+    const statusDisplay = document.getElementById('status-display');
+    const depthDisplay = document.getElementById('depth-display');
+    const layerIndicator = document.getElementById('layer-indicator');
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const winScreen = document.getElementById('win-screen');
+    const deathReason = document.getElementById('death-reason');
+
+    // --- GAME DATA ---
+
+    // Level 1: Earth (Classic)
+    const LEVEL_1_LAYERS = [
+        { id: 'CRUST', name: "THE CRUST", endY: 1200, bg: "#87CEEB", color: "#8B4513", effect: 'none' },
+        { id: 'MANTLE', name: "THE MANTLE", endY: 2800, bg: "#590808", color: "#B22222", effect: 'heat' },
+        { id: 'OUTER', name: "OUTER CORE", endY: 4000, bg: "#8B4500", color: "#FF8C00", effect: 'magnetic' },
+        { id: 'INNER', name: "INNER CORE", endY: 4800, bg: "#F0E68C", color: "#FFFFFF", effect: 'pressure' }
+    ];
+
+    // Level 2: The Cosmic Void (20 Imaginative Layers)
+    // Depth increments of roughly 600-800px per layer
+    const L2_DEPTH_INC = 700; 
+    let d = 0;
+    const LEVEL_2_LAYERS = [
+        { name: "CLOUDTOPS",       bg: "#dff9fb", color: "#c7ecee", effect: "wind" },
+        { name: "LOW ORBIT",       bg: "#130f40", color: "#30336b", effect: "low_grav" },
+        { name: "ASTEROID BELT",   bg: "#2c3e50", color: "#95a5a6", effect: "crumble" },
+        { name: "SPACE STATION",   bg: "#2c2c54", color: "#474787", effect: "electric" },
+        { name: "BIO-SHIP",        bg: "#2ecc71", color: "#27ae60", effect: "bouncy" },
+        { name: "CRYO-CHAMBER",    bg: "#a29bfe", color: "#74b9ff", effect: "slippery" },
+        { name: "HIVE MIND",       bg: "#6c5ce7", color: "#a29bfe", effect: "sticky" },
+        { name: "DIGITAL VERSE",   bg: "#000000", color: "#00ff00", effect: "digital" }, // Disappearing plats
+        { name: "DARK VOID",       bg: "#000000", color: "#333333", effect: "darkness" },
+        { name: "SOLAR FLARE",     bg: "#e17055", color: "#d63031", effect: "heat" },
+        { name: "NEBULA",          bg: "#e056fd", color: "#be2edd", effect: "floaty" }, // High air resistance
+        { name: "WARP TUNNEL",     bg: "#22a6b3", color: "#7ed6df", effect: "speed" },
+        { name: "MIRROR REALM",    bg: "#b2bec3", color: "#636e72", effect: "inverted" },
+        { name: "CLOCKWORK",       bg: "#f0932b", color: "#ffbe76", effect: "rhythm" }, // Moving plats
+        { name: "CANDY CORE",      bg: "#ff9ff3", color: "#f368e0", effect: "bouncy_sticky" },
+        { name: "HAUNTED EXPANSE", bg: "#1e272e", color: "#485460", effect: "invisible" },
+        { name: "NEON GRID",       bg: "#192a56", color: "#fbc531", effect: "laser" },
+        { name: "GLITCH CITY",     bg: "#4834d4", color: "#686de0", effect: "teleport" },
+        { name: "EVENT HORIZON",   bg: "#2d3436", color: "#000000", effect: "heavy_grav" },
+        { name: "SINGULARITY",     bg: "#FFFFFF", color: "#000000", effect: "final" }
+    ].map((l, i) => { 
+        d += L2_DEPTH_INC; 
+        return { ...l, endY: d, id: `L2_${i}` }; 
+    });
+
+    // Global Config
+    const GRAVITY_DEFAULT = 0.6;
+    const FRICTION_DEFAULT = 0.8;
+    const SPEED_DEFAULT = 5;
+    const JUMP_DEFAULT = -12;
+
+    // State
+    let gameState = 'MENU';
+    let currentLevelId = 1;
+    let currentLayersConfig = [];
+    let frameCount = 0;
+    let particles = [];
+    let cameraY = 0;
+    let currentLayerIndex = 0;
+    let activeEffect = 'none';
+
+    // Player
+    const player = {
+        x: 400, y: 100, w: 24, h: 24,
+        dx: 0, dy: 0,
+        grounded: false,
+        doubleJump: true,
+        flipX: 1
+    };
+
+    let platforms = [];
+    let hazards = [];
+    let goal = null;
+
+    // Controls
+    const keys = { right: false, left: false, up: false };
+
+    // --- INPUT ---
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'r' || e.key === 'R') {
+            if (gameState === 'PLAYING') retryLevel();
+            return;
+        }
+        if (gameState !== 'PLAYING') return;
+        
+        let k = e.key.toLowerCase();
+        if (k === 'arrowright' || k === 'd') keys.right = true;
+        if (k === 'arrowleft' || k === 'a') keys.left = true;
+        if ((k === 'arrowup' || k === 'w' || k === ' ') && !keys.up) {
+            keys.up = true;
+            jump();
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        let k = e.key.toLowerCase();
+        if (k === 'arrowright' || k === 'd') keys.right = false;
+        if (k === 'arrowleft' || k === 'a') keys.left = false;
+        if (k === 'arrowup' || k === 'w' || k === ' ') keys.up = false;
+    });
+
+    // --- PHYSICS ENGINE ---
+
+    function jump() {
+        // Sticky effect prevents jumping high
+        if (activeEffect === 'sticky' && player.grounded) {
+             player.dy = JUMP_DEFAULT * 0.3;
+             player.grounded = false;
+             return;
+        }
+
+        let jumpPwr = JUMP_DEFAULT;
+        if (activeEffect === 'low_grav') jumpPwr = -15;
+        if (activeEffect === 'heavy_grav') jumpPwr = -8;
+
+        if (player.grounded) {
+            player.dy = jumpPwr;
+            player.grounded = false;
+            createParticles(player.x + player.w/2, player.y + player.h, 10, '#fff');
+        } else if (player.doubleJump) {
+            player.dy = jumpPwr * 0.9;
+            player.doubleJump = false;
+            createParticles(player.x + player.w/2, player.y + player.h, 10, '#0ff');
+        }
+    }
+
+    function generateLevel(levelId) {
+        platforms = [];
+        hazards = [];
+        particles = [];
+        
+        currentLevelId = levelId;
+        currentLayersConfig = levelId === 1 ? LEVEL_1_LAYERS : LEVEL_2_LAYERS;
+        
+        // Start Platform
+        platforms.push({x: 300, y: 150, w: 200, h: 20, type: 'normal'});
+
+        let yCursor = 250;
+        let totalDepth = currentLayersConfig[currentLayersConfig.length - 1].endY;
+        
+        // Generate Loop
+        while (yCursor < totalDepth) {
+            // Find which layer this Y belongs to
+            let layer = currentLayersConfig.find(l => yCursor < l.endY) || currentLayersConfig[currentLayersConfig.length-1];
+            
+            // Mechanic determination
+            let type = 'normal';
+            let moveX = 0;
+            let crumble = false;
+            let invisible = false;
+
+            if (layer.effect === 'bouncy' || layer.effect === 'bouncy_sticky') type = 'bounce';
+            if (layer.effect === 'crumble') crumble = true;
+            if (layer.effect === 'invisible') invisible = true;
+            if (layer.effect === 'rhythm' || layer.effect === 'magnetic') moveX = (Math.random() > 0.5 ? 2 : 0);
+            if (layer.effect === 'digital') type = 'flicker'; // Disappears periodically
+
+            const count = Math.floor(Math.random() * 2) + 1;
+            
+            for (let i = 0; i < count; i++) {
+                const w = Math.random() * 100 + 80;
+                const x = Math.random() * (canvas.width - w);
+                
+                platforms.push({
+                    x: x, y: yCursor, w: w, h: 20,
+                    type: type,
+                    moveX: moveX,
+                    origX: x,
+                    moveRange: 120,
+                    dir: 1,
+                    crumble: crumble,
+                    hp: 30, // for crumble
+                    invisible: invisible,
+                    alpha: invisible ? 0 : 1,
+                    flickerTimer: Math.random() * 100,
+                    layerColor: layer.color
+                });
+            }
+
+            // Hazards
+            if (Math.random() > 0.3) {
+                let hType = 'spike';
+                if (layer.effect === 'heat' || layer.effect === 'magma') hType = 'lava';
+                if (layer.effect === 'electric' || layer.effect === 'laser') hType = 'electric';
+                if (layer.effect === 'digital' || layer.effect === 'glitch') hType = 'glitch';
+
+                hazards.push({
+                    x: Math.random() * canvas.width,
+                    y: yCursor - 30 + Math.random() * 60,
+                    w: 25, h: 25,
+                    type: hType,
+                    moveX: (layer.effect === 'hazards_moving' || layer.effect === 'wind') ? 3 : 0,
+                    dir: 1
+                });
+            }
+
+            yCursor += 100 + Math.random() * 40;
+        }
+
+        goal = { x: 350, y: totalDepth + 50, w: 100, h: 100 };
+        platforms.push({ x: 300, y: totalDepth + 160, w: 200, h: 40, type: 'normal', layerColor: '#fff' });
+    }
+
+    function createParticles(x, y, count, color) {
+        for(let i=0; i<count; i++) {
+            particles.push({
+                x: x, y: y,
+                dx: (Math.random() - 0.5) * 5,
+                dy: (Math.random() - 0.5) * 5,
+                life: 1.0, color: color
+            });
+        }
+    }
+
+    // --- MAIN LOOP ---
+
+    function update() {
+        // 1. Identify active layer and effect
+        let foundLayer = currentLayersConfig.find(l => player.y < l.endY) || currentLayersConfig[currentLayersConfig.length-1];
+        if (currentLayersConfig.indexOf(foundLayer) !== currentLayerIndex) {
+            currentLayerIndex = currentLayersConfig.indexOf(foundLayer);
+            showLayerTitle(foundLayer.name);
+        }
+        activeEffect = foundLayer.effect;
+
+        // 2. Apply Environment Physics
+        let currentGravity = GRAVITY_DEFAULT;
+        let currentFriction = FRICTION_DEFAULT;
+        let currentSpeed = SPEED_DEFAULT;
+
+        if (activeEffect === 'low_grav') currentGravity = 0.2;
+        if (activeEffect === 'heavy_grav') currentGravity = 0.9;
+        if (activeEffect === 'floaty') { currentGravity = 0.3; currentFriction = 0.95; }
+        if (activeEffect === 'slippery') currentFriction = 0.99; // Ice physics
+        if (activeEffect === 'sticky') { currentSpeed = 2; currentFriction = 0.5; }
+        if (activeEffect === 'speed') currentSpeed = 9;
+
+        // Inverted Controls
+        let inputRight = keys.right;
+        let inputLeft = keys.left;
+        if (activeEffect === 'inverted') {
+            inputRight = keys.left;
+            inputLeft = keys.right;
+            statusDisplay.innerText = "CONTROLS INVERTED!";
+            statusDisplay.style.color = "#ff0000";
+        } else {
+            statusDisplay.innerText = activeEffect.toUpperCase();
+            statusDisplay.style.color = "#00ff00";
+        }
+
+        // Wind Effect
+        if (activeEffect === 'wind') player.dx += 0.2;
+
+        // Movement
+        if (inputRight) player.dx += (activeEffect === 'slippery' ? 0.2 : 1.5); // Accel slower on ice
+        else if (inputLeft) player.dx -= (activeEffect === 'slippery' ? 0.2 : 1.5);
+        else player.dx *= currentFriction;
+
+        // Clamp Speed
+        if (player.dx > currentSpeed) player.dx = currentSpeed;
+        if (player.dx < -currentSpeed) player.dx = -currentSpeed;
+
+        player.dy += currentGravity;
+        player.x += player.dx;
+        player.y += player.dy;
+
+        // Boundaries
+        if (player.x < 0) player.x = 0;
+        if (player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+
+        // 3. Platform Collisions
+        player.grounded = false;
+        
+        platforms.forEach(p => {
+            // Logic for Moving/Flickering
+            if (p.moveX) {
+                p.x += p.moveX * p.dir;
+                if (p.x > p.origX + p.moveRange || p.x < p.origX - p.moveRange) p.dir *= -1;
+            }
+            if (p.type === 'flicker') {
+                p.flickerTimer++;
+                if (p.flickerTimer > 150) p.flickerTimer = 0;
+            }
+            if (p.invisible) {
+                // Reveal if close
+                let dist = Math.hypot(player.x - p.x, player.y - p.y);
+                p.alpha = dist < 150 ? (150 - dist)/150 : 0;
+            }
+
+            // Skip collision if flicker invisible
+            if (p.type === 'flicker' && p.flickerTimer > 100) return;
+
+            // Collision AABB
+            if (player.dy > 0 &&
+                player.y + player.h > p.y &&
+                player.y + player.h < p.y + p.h + player.dy + 8 &&
+                player.x + player.w > p.x &&
+                player.x < p.x + p.w) {
+                
+                player.grounded = true;
+                player.doubleJump = true;
+                player.dy = 0;
+                player.y = p.y - player.h;
+
+                // Effect: Bounce
+                if (p.type === 'bounce') {
+                    player.dy = -18;
+                    player.doubleJump = true;
+                    createParticles(player.x, player.y + player.h, 5, '#FFFF00');
+                }
+
+                // Effect: Crumble
+                if (p.crumble) {
+                    p.hp--;
+                    createParticles(player.x + Math.random()*20, p.y, 1, '#888');
+                    if (p.hp <= 0) p.y = 99999; // Remove
+                }
+                
+                // Move Player
+                if (p.moveX) player.x += p.moveX * p.dir;
+            }
+        });
+
+        // 4. Hazards
+        hazards.forEach(h => {
+            if (h.moveX) {
+                h.x += h.moveX * h.dir;
+                if (h.x > canvas.width || h.x < 0) h.dir *= -1;
+            }
+
+            // Simple Circle/Rect collision
+            if (player.x < h.x + h.w && player.x + player.w > h.x &&
+                player.y < h.y + h.h && player.y + player.h > h.y) {
+                
+                if (activeEffect === 'teleport' && Math.random() > 0.5) {
+                    // Glitch city mechanic: hitting a hazard might just teleport you safely up
+                    player.y -= 200;
+                    player.dy = 0;
+                    createParticles(player.x, player.y, 20, '#0f0');
+                } else {
+                    gameOver(`Killed by ${h.type.toUpperCase()}`);
+                }
+            }
+        });
+
+        // Camera
+        let targetCamY = player.y - canvas.height / 3;
+        if (targetCamY < 0) targetCamY = 0;
+        let maxDepth = currentLayersConfig[currentLayersConfig.length - 1].endY;
+        if (targetCamY > maxDepth - canvas.height + 200) targetCamY = maxDepth - canvas.height + 200;
+        cameraY += (targetCamY - cameraY) * 0.1;
+
+        // Check Win/Loss
+        if (player.y > goal.y && player.x > goal.x && player.x < goal.x + goal.w) winGame();
+        if (player.y > maxDepth + 400) gameOver("Lost in the void.");
+
+        // Particles
+        particles.forEach((p, i) => {
+            p.x += p.dx; p.y += p.dy; p.life -= 0.05;
+            if (p.life <= 0) particles.splice(i, 1);
+        });
+
+        // UI
+        canvas.style.backgroundColor = foundLayer.bg;
+        depthDisplay.innerText = `DEPTH: ${Math.floor(player.y)}m`;
+        frameCount++;
+    }
+
+    // --- DRAWING ---
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        
+        // Screenshake for some effects
+        if (activeEffect === 'heavy_grav' && player.grounded && Math.abs(player.dx) > 1) {
+            ctx.translate((Math.random()-0.5)*2, (Math.random()-0.5)*2);
+        }
+
+        ctx.translate(0, -cameraY);
+
+        drawBackgrounds();
+
+        // Goal
+        if (goal) {
+            ctx.fillStyle = "#fff";
+            ctx.shadowBlur = 30; ctx.shadowColor = "#f1c40f";
+            ctx.beginPath(); ctx.arc(goal.x + goal.w/2, goal.y + goal.h/2, 40, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        // Platforms
+        platforms.forEach(p => {
+            if (p.y > player.y + 600 || p.y < player.y - 600) return; // Culling
+
+            ctx.globalAlpha = p.invisible ? p.alpha : (p.type === 'flicker' && p.flickerTimer > 100 ? 0.2 : 1);
+            
+            ctx.fillStyle = p.layerColor || '#888';
+            if (p.type === 'bounce') ctx.fillStyle = '#ff00ff';
+            if (p.crumble) ctx.fillStyle = `rgba(150, 100, 50, ${p.hp/30})`;
+
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            
+            // Detail
+            ctx.fillStyle = "rgba(0,0,0,0.2)";
+            ctx.fillRect(p.x, p.y + p.h - 5, p.w, 5);
+
+            ctx.globalAlpha = 1;
+        });
+
+        // Hazards
+        hazards.forEach(h => {
+             if (h.y > player.y + 600 || h.y < player.y - 600) return;
+
+             if (h.type === 'lava') {
+                 ctx.fillStyle = `hsl(${frameCount % 30 + 10}, 100%, 50%)`;
+                 ctx.fillRect(h.x, h.y, h.w, h.h);
+             } else if (h.type === 'electric') {
+                 ctx.fillStyle = '#0ff';
+                 if (Math.floor(frameCount/5) % 2 === 0) {
+                     ctx.beginPath(); ctx.arc(h.x+h.w/2, h.y+h.h/2, h.w/2, 0, Math.PI*2); ctx.stroke();
+                 }
+             } else {
+                 ctx.fillStyle = '#7f8c8d';
+                 ctx.beginPath();
+                 ctx.moveTo(h.x, h.y + h.h); ctx.lineTo(h.x + h.w/2, h.y); ctx.lineTo(h.x + h.w, h.y + h.h);
+                 ctx.fill();
+             }
+        });
+
+        // Particles
+        particles.forEach(p => {
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, 3, 3);
+            ctx.globalAlpha = 1;
+        });
+
+        drawPlayer();
+
+        ctx.restore();
+
+        // Overlay Effects (Post-processing style)
+        if (activeEffect === 'darkness') {
+            // Draw giant black rect with hole in it
+            ctx.fillStyle = "black";
+            ctx.beginPath();
+            ctx.rect(0, 0, canvas.width, canvas.height);
+            ctx.arc(player.x + player.w/2, player.y + player.h/2 - cameraY, 120, 0, Math.PI*2, true);
+            ctx.fill();
+        }
+        if (activeEffect === 'digital') {
+            // Scanlines
+            ctx.fillStyle = "rgba(0, 255, 0, 0.05)";
+            for(let i=0; i<canvas.height; i+=4) {
+                ctx.fillRect(0, i, canvas.width, 1);
+            }
+        }
+    }
+
+    function drawBackgrounds() {
+        // Simple visuals based on effect
+        if (activeEffect === 'wind' || activeEffect === 'speed') {
+            ctx.fillStyle = "rgba(255,255,255,0.1)";
+            for(let i=0; i<5; i++) {
+                let x = (frameCount * 20 + i * 200) % canvas.width;
+                ctx.fillRect(x, cameraY + i*100, 50, 2);
+            }
+        }
+        if (activeEffect === 'digital' || activeEffect === 'glitch') {
+            ctx.font = "20px monospace";
+            ctx.fillStyle = "#0f0";
+            if(Math.random()>0.9) ctx.fillText("010101", Math.random()*800, cameraY + Math.random()*600);
+        }
+        if (activeEffect === 'crumble' || activeEffect === 'low_grav') {
+             ctx.fillStyle = "rgba(255,255,255,0.2)";
+             for(let i=0; i<10; i++) ctx.fillRect(Math.random()*800, cameraY + Math.random()*600, 2, 2);
+        }
+    }
+
+    function drawPlayer() {
+        ctx.save();
+        if (activeEffect === 'inverted') ctx.filter = 'hue-rotate(180deg)';
+        
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(player.x, player.y, player.w, player.h);
+        
+        // Eye
+        ctx.fillStyle = "#333";
+        let eyeX = keys.right ? player.x + 14 : (keys.left ? player.x + 2 : player.x + 8);
+        ctx.fillRect(eyeX, player.y + 6, 8, 8);
+
+        // Accessories
+        if (currentLevelId === 2) {
+            // Space Helmet
+            ctx.strokeStyle = "#0ff";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(player.x-2, player.y-2, player.w+4, player.h+4);
+        }
+
+        ctx.restore();
+    }
+
+    function showLayerTitle(name) {
+        layerIndicator.innerText = name;
+        layerIndicator.style.opacity = 1;
+        setTimeout(() => layerIndicator.style.opacity = 0, 2000);
+    }
+
+    function showStartScreen() {
+        gameState = 'MENU';
+        startScreen.classList.remove('hidden');
+        gameOverScreen.classList.add('hidden');
+        winScreen.classList.add('hidden');
+    }
+
+    function startGame(level) {
+        startScreen.classList.add('hidden');
+        gameOverScreen.classList.add('hidden');
+        winScreen.classList.add('hidden');
+        
+        currentLevelId = level;
+        resetPlayer();
+        generateLevel(level);
+        gameState = 'PLAYING';
+        loop();
+    }
+
+    function retryLevel() {
+        startGame(currentLevelId);
+    }
+
+    function resetPlayer() {
+        player.x = 350; player.y = 100; player.dx = 0; player.dy = 0;
+        cameraY = 0;
+        currentLayerIndex = 0;
+    }
+
+    function gameOver(reason) {
+        gameState = 'GAMEOVER';
+        deathReason.innerText = reason;
+        gameOverScreen.classList.remove('hidden');
+    }
+
+    function winGame() {
+        gameState = 'WIN';
+        winScreen.classList.remove('hidden');
+    }
+
+    function loop() {
+        if (gameState === 'PLAYING') {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+    }
+
+    // Init
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+</script>
+</body>
+</html>
