@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Braille Pixel Artist</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #e2e8f0;
+            overflow-x: hidden; /* Prevent pull-to-refresh on mobile */
+            touch-action: pan-x pan-y;
+        }
+
+        /* The Drawing Grid */
+        #pixel-grid {
+            display: grid;
+            gap: 1px;
+            background-color: #334155; /* Grid line color */
+            border: 1px solid #334155;
+            user-select: none;
+            touch-action: none; /* Critical for drawing on mobile */
+        }
+
+        .pixel {
+            background-color: #1e293b; /* Inactive color */
+            cursor: crosshair;
+            transition: background-color 0.05s ease;
+        }
+
+        .pixel.active {
+            background-color: #22d3ee; /* Active color (Cyan-400) */
+        }
+
+        .pixel:hover {
+            opacity: 0.8;
+        }
+
+        /* Custom Scrollbar for output */
+        textarea::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        textarea::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        textarea::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 4px;
+        }
+        textarea::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+
+        /* Tooltip animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .toast {
+            animation: fadeIn 0.3s ease-out;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 overflow-y-auto">
+
+    <!-- Header -->
+    <div class="w-full max-w-5xl flex justify-between items-center mb-4 mt-4 lg:mt-0">
+        <div>
+            <h1 class="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
+                <i class="fas fa-braille mr-2"></i>Braille Canvas
+            </h1>
+            <p class="text-slate-400 text-xs mt-1">Draw pixels, get text.</p>
+        </div>
+        
+        <div class="flex gap-2">
+            <!-- Dimensions Settings -->
+            <div class="hidden md:flex items-center bg-slate-800 rounded-lg px-3 py-1 text-sm border border-slate-700">
+                <span class="text-slate-400 mr-2">Grid:</span>
+                <input type="number" id="width-input" value="40" min="4" max="60" class="w-12 bg-transparent text-center focus:outline-none border-b border-slate-600 focus:border-cyan-400 transition-colors">
+                <span class="mx-1 text-slate-500">x</span>
+                <input type="number" id="height-input" value="20" min="4" max="60" class="w-12 bg-transparent text-center focus:outline-none border-b border-slate-600 focus:border-cyan-400 transition-colors">
+                <button onclick="resizeGrid()" class="ml-2 text-cyan-400 hover:text-cyan-300 transition-colors" title="Apply Size"><i class="fas fa-check"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="w-full max-w-5xl flex flex-col lg:flex-row gap-6 lg:h-[80vh] h-auto mb-8 lg:mb-0">
+        
+        <!-- Left Column: Toolbar & Canvas -->
+        <div class="flex-1 flex flex-col gap-4 min-h-0">
+            
+            <!-- Toolbar -->
+            <div class="bg-slate-800/80 backdrop-blur-sm p-2 rounded-xl flex items-center justify-between border border-slate-700 shadow-lg">
+                <div class="flex gap-1">
+                    <button id="btn-draw" class="p-3 rounded-lg bg-cyan-600 text-white shadow-lg shadow-cyan-900/50 transition-all hover:scale-105 active:scale-95" onclick="setTool('draw')" title="Pencil">
+                        <i class="fas fa-pencil-alt"></i>
+                    </button>
+                    <button id="btn-erase" class="p-3 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all hover:scale-105 active:scale-95" onclick="setTool('erase')" title="Eraser">
+                        <i class="fas fa-eraser"></i>
+                    </button>
+                </div>
+
+                <div class="h-6 w-px bg-slate-600 mx-2"></div>
+
+                <div class="flex gap-1">
+                    <button class="p-3 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all hover:scale-105 active:scale-95" onclick="invertGrid()" title="Invert Colors">
+                        <i class="fas fa-adjust"></i>
+                    </button>
+                    <button class="p-3 rounded-lg bg-red-900/50 text-red-400 hover:bg-red-900/80 border border-red-900 transition-all hover:scale-105 active:scale-95" onclick="clearGrid()" title="Clear Canvas">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Canvas Container -->
+            <div class="relative flex-1 bg-slate-900 rounded-xl border-2 border-slate-800 shadow-inner overflow-hidden flex items-center justify-center p-4 min-h-[400px] lg:min-h-0">
+                <div id="pixel-grid" class="shadow-2xl">
+                    <!-- Grid items generated by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Output -->
+        <div class="lg:w-80 flex flex-col gap-4 min-h-0">
+            <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 h-full flex flex-col shadow-lg">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Output</h2>
+                    <span class="text-xs text-slate-500 bg-slate-900 px-2 py-1 rounded">Unicode Braille</span>
+                </div>
+                
+                <textarea id="output-area" readonly spellcheck="false" 
+                    class="flex-1 w-full bg-slate-950 text-cyan-400 p-4 rounded-lg font-mono text-sm resize-none focus:outline-none border border-slate-800 leading-tight tracking-widest"></textarea>
+                
+                <div class="mt-4 flex gap-2">
+                    <button onclick="copyToClipboard()" class="flex-1 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2">
+                        <i class="far fa-copy"></i> Copy Text
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Instructions/Legend -->
+            <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700 text-xs text-slate-400">
+                <p class="mb-2"><strong class="text-slate-300">How it works:</strong></p>
+                <ul class="list-disc pl-4 space-y-1">
+                    <li>Draw on the left grid.</li>
+                    <li>Pixels are grouped into 2x4 blocks.</li>
+                    <li>Each block becomes one Braille character.</li>
+                    <li>Paste anywhere (Discord, Twitter, Code).</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-slate-800 text-cyan-400 px-6 py-3 rounded-full shadow-2xl border border-cyan-900/50 hidden items-center gap-3 z-50">
+        <i class="fas fa-check-circle"></i>
+        <span id="toast-msg">Copied to clipboard!</span>
+    </div>
+
+<script>
+    // State
+    let width = 40;
+    let height = 20;
+    let isDrawing = false;
+    let currentTool = 'draw'; // 'draw' or 'erase'
+    
+    // DOM Elements
+    const gridEl = document.getElementById('pixel-grid');
+    const outputEl = document.getElementById('output-area');
+    const btnDraw = document.getElementById('btn-draw');
+    const btnErase = document.getElementById('btn-erase');
+    const toastEl = document.getElementById('toast');
+    const widthInput = document.getElementById('width-input');
+    const heightInput = document.getElementById('height-input');
+
+    // Initialization
+    function init() {
+        createGrid();
+        updateOutput();
+        
+        // Window resize listener to fit grid if needed (optional optimization)
+        // Global mouse up to stop drawing even if mouse leaves grid
+        document.addEventListener('mouseup', () => isDrawing = false);
+        document.addEventListener('touchend', () => isDrawing = false);
+    }
+
+    // Grid Management
+    function createGrid() {
+        gridEl.innerHTML = '';
+        
+        // Set CSS Grid template
+        gridEl.style.gridTemplateColumns = `repeat(${width}, 1fr)`;
+        
+        // Calculate cell size based on container availability (Responsive)
+        // We do this roughly to keep pixels square
+        const container = gridEl.parentElement;
+        // Approx calc: max width / cols vs max height / rows
+        
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const pixel = document.createElement('div');
+                pixel.classList.add('pixel');
+                pixel.dataset.x = x;
+                pixel.dataset.y = y;
+                pixel.dataset.active = "0";
+
+                // Mouse Events
+                pixel.addEventListener('mousedown', (e) => {
+                    e.preventDefault(); // Prevent text selection
+                    isDrawing = true;
+                    paint(pixel);
+                });
+                pixel.addEventListener('mouseenter', (e) => {
+                    if (isDrawing) paint(pixel);
+                });
+
+                // Touch Events
+                // Handled on container level for performance and better touch tracking
+                
+                gridEl.appendChild(pixel);
+            }
+        }
+    }
+
+    // Handle touch move specifically
+    gridEl.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        isDrawing = true;
+        handleTouch(e);
+    }, { passive: false });
+
+    gridEl.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if(isDrawing) handleTouch(e);
+    }, { passive: false });
+
+    function handleTouch(e) {
+        const touch = e.touches[0];
+        const target = document.elementFromPoint(touch.clientX, touch.clientY);
+        if (target && target.classList.contains('pixel')) {
+            paint(target);
+        }
+    }
+
+    function resizeGrid() {
+        let w = parseInt(widthInput.value);
+        let h = parseInt(heightInput.value);
+
+        // Constraints
+        if (w < 4) w = 4; if (w > 80) w = 80;
+        if (h < 4) h = 4; if (h > 80) h = 80;
+        
+        // Ensure even width (for braille columns) and div by 4 height (for braille rows)
+        // We allow non-compliant sizes but padding logic in conversion handles it.
+        // However, for best UI experience, let's suggest/enforce slightly.
+        if (h % 4 !== 0) {
+            h = Math.ceil(h / 4) * 4;
+            heightInput.value = h;
+        }
+        if (w % 2 !== 0) {
+            w = Math.ceil(w / 2) * 2;
+            widthInput.value = w;
+        }
+
+        width = w;
+        height = h;
+        createGrid();
+        updateOutput();
+    }
+
+    // Painting Logic
+    function paint(element) {
+        if (currentTool === 'draw') {
+            element.dataset.active = "1";
+            element.classList.add('active');
+        } else {
+            element.dataset.active = "0";
+            element.classList.remove('active');
+        }
+        updateOutput();
+    }
+
+    function setTool(tool) {
+        currentTool = tool;
+        if (tool === 'draw') {
+            btnDraw.classList.replace('bg-slate-700', 'bg-cyan-600');
+            btnDraw.classList.replace('text-slate-300', 'text-white');
+            btnErase.classList.replace('bg-cyan-600', 'bg-slate-700');
+            btnErase.classList.replace('text-white', 'text-slate-300');
+        } else {
+            btnErase.classList.replace('bg-slate-700', 'bg-cyan-600');
+            btnErase.classList.replace('text-slate-300', 'text-white');
+            btnDraw.classList.replace('bg-cyan-600', 'bg-slate-700');
+            btnDraw.classList.replace('text-white', 'text-slate-300');
+        }
+    }
+
+    function clearGrid() {
+        const pixels = document.querySelectorAll('.pixel');
+        pixels.forEach(p => {
+            p.dataset.active = "0";
+            p.classList.remove('active');
+        });
+        updateOutput();
+    }
+
+    function invertGrid() {
+        const pixels = document.querySelectorAll('.pixel');
+        pixels.forEach(p => {
+            if (p.dataset.active === "1") {
+                p.dataset.active = "0";
+                p.classList.remove('active');
+            } else {
+                p.dataset.active = "1";
+                p.classList.add('active');
+            }
+        });
+        updateOutput();
+    }
+
+    // Braille Conversion Logic
+    // Unicode Braille Patterns: U+2800 to U+28FF
+    // The dots are arranged:
+    // 1 4
+    // 2 5
+    // 3 6
+    // 7 8
+    // Bit values: 1=0x1, 2=0x2, 3=0x4, 4=0x8, 5=0x10, 6=0x20, 7=0x40, 8=0x80
+    function updateOutput() {
+        let result = "";
+        const pixels = Array.from(document.querySelectorAll('.pixel'));
+        
+        // Helper to get pixel state at coordinates
+        const getPixel = (x, y) => {
+            if (x >= width || y >= height) return 0;
+            const index = y * width + x;
+            return pixels[index].dataset.active === "1" ? 1 : 0;
+        };
+
+        // Iterate through 2x4 blocks
+        for (let y = 0; y < height; y += 4) {
+            for (let x = 0; x < width; x += 2) {
+                let offset = 0;
+                
+                // Calculate Braille Offset based on active pixels in the 2x4 chunk
+                // Dot 1 (0,0)
+                if (getPixel(x, y)) offset += 1;
+                // Dot 2 (0,1)
+                if (getPixel(x, y + 1)) offset += 2;
+                // Dot 3 (0,2)
+                if (getPixel(x, y + 2)) offset += 4;
+                // Dot 4 (1,0)
+                if (getPixel(x + 1, y)) offset += 8;
+                // Dot 5 (1,1)
+                if (getPixel(x + 1, y + 1)) offset += 16;
+                // Dot 6 (1,2)
+                if (getPixel(x + 1, y + 2)) offset += 32;
+                // Dot 7 (0,3)
+                if (getPixel(x, y + 3)) offset += 64;
+                // Dot 8 (1,3)
+                if (getPixel(x + 1, y + 3)) offset += 128;
+
+                result += String.fromCharCode(0x2800 + offset);
+            }
+            result += "\n";
+        }
+
+        outputEl.value = result;
+    }
+
+    // UI Utilities
+    function copyToClipboard() {
+        outputEl.select();
+        document.execCommand('copy');
+        
+        // Show Toast
+        const toast = document.getElementById('toast');
+        toast.classList.remove('hidden');
+        toast.classList.add('flex');
+        
+        setTimeout(() => {
+            toast.classList.add('hidden');
+            toast.classList.remove('flex');
+        }, 2000);
+    }
+
+    // Responsive Pixel sizing
+    function adjustPixelSize() {
+        const container = gridEl.parentElement;
+        const availWidth = container.clientWidth - 32; // padding
+        const availHeight = container.clientHeight - 32;
+        
+        const pxW = Math.floor(availWidth / width);
+        const pxH = Math.floor(availHeight / height);
+        
+        // Use the smaller dimension to keep square pixels, max 25px
+        const size = Math.min(Math.min(pxW, pxH), 25);
+        const minSize = 10; // Minimum usable size on mobile
+
+        const finalSize = Math.max(size, minSize);
+
+        // Update CSS variable or class
+        // Since we are using flex/grid, we can just constrain container width/height
+        // But adjusting grid gap/padding might be needed.
+        // CSS Grid `1fr` handles most of it, but we can set max-width on the grid itself
+        
+        gridEl.style.width = `${finalSize * width}px`;
+        gridEl.style.height = `${finalSize * height}px`;
+    }
+
+    // Init
+    init();
+    
+    // Resize observer to keep pixels looking good
+    const resizeObserver = new ResizeObserver(() => {
+        adjustPixelSize();
+    });
+    resizeObserver.observe(document.querySelector('.relative')); // Observer the container
+
+</script>
+</body>
+</html>
