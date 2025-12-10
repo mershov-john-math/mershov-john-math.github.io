@@ -86,6 +86,9 @@
         const [showSettings, setShowSettings] = useState(true);
         const [showWarning, setShowWarning] = useState(false);
         const iframeRef = useRef(null);
+        
+        // Track currently held keys to prevent duplicate events or stuck keys
+        const activeKeys = useRef(new Set());
 
         useEffect(() => {
             lucide.createIcons();
@@ -110,9 +113,12 @@
             } catch(e) {}
         };
 
-        // Key Simulator Logic
-        const simulateKey = (keyName, code, keyCode) => {
+        // Key Simulator Logic: Split into Start (Down) and Stop (Up)
+        const startKey = (keyName, code, keyCode) => {
             if (!iframeRef.current) return;
+            // If key is already processed as down, don't fire again (optional, but good for game loops)
+            if (activeKeys.current.has(code)) return;
+            activeKeys.current.add(code);
 
             try {
                 const iframeWin = iframeRef.current.contentWindow;
@@ -125,22 +131,45 @@
                     which: keyCode,
                     bubbles: true,
                     cancelable: true,
-                    view: iframeWin
+                    view: iframeWin,
+                    repeat: false
                 };
 
                 const eventDown = new KeyboardEvent('keydown', eventConfig);
-                const eventPress = new KeyboardEvent('keypress', eventConfig);
-                const eventUp = new KeyboardEvent('keyup', eventConfig);
-
                 iframeWin.document.dispatchEvent(eventDown);
-                iframeWin.document.dispatchEvent(eventPress);
                 
-                setTimeout(() => {
-                    iframeWin.document.dispatchEvent(eventUp);
-                }, 50);
+                // Fire keypress for older games compatibility
+                const eventPress = new KeyboardEvent('keypress', eventConfig);
+                iframeWin.document.dispatchEvent(eventPress);
 
             } catch (err) {
-                console.warn("Blocked by browser security (CORS). Keys only work on same-origin iframes.");
+                // Errors handled in loadSite/warnings
+            }
+        };
+
+        const stopKey = (keyName, code, keyCode) => {
+            if (!iframeRef.current) return;
+            activeKeys.current.delete(code);
+
+            try {
+                const iframeWin = iframeRef.current.contentWindow;
+                
+                const eventConfig = {
+                    key: keyName,
+                    code: code,
+                    keyCode: keyCode,
+                    which: keyCode,
+                    bubbles: true,
+                    cancelable: true,
+                    view: iframeWin,
+                    repeat: false
+                };
+
+                const eventUp = new KeyboardEvent('keyup', eventConfig);
+                iframeWin.document.dispatchEvent(eventUp);
+
+            } catch (err) {
+                // Errors handled in loadSite/warnings
             }
         };
 
@@ -317,13 +346,31 @@
                                                 key={kIdx}
                                                 className={`kb-key ${k.s ? 'special' : ''} ${k.cls || ''}`}
                                                 style={{ flex: k.w }}
+                                                
+                                                // Touch Events (Mobile)
                                                 onTouchStart={(e) => {
-                                                    e.preventDefault(); // Prevent focus stealing
-                                                    simulateKey(k.c, k.c, k.k);
+                                                    e.preventDefault();
+                                                    startKey(k.c, k.c, k.k);
                                                 }}
+                                                onTouchEnd={(e) => {
+                                                    e.preventDefault();
+                                                    stopKey(k.c, k.c, k.k);
+                                                }}
+                                                
+                                                // Mouse Events (Desktop testing)
                                                 onMouseDown={(e) => {
                                                     e.preventDefault();
-                                                    simulateKey(k.c, k.c, k.k);
+                                                    startKey(k.c, k.c, k.k);
+                                                }}
+                                                onMouseUp={(e) => {
+                                                    e.preventDefault();
+                                                    stopKey(k.c, k.c, k.k);
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    // Safety: if you drag finger/mouse off button, release key
+                                                    if (activeKeys.current.has(k.c)) {
+                                                        stopKey(k.c, k.c, k.k);
+                                                    }
                                                 }}
                                             >
                                                 {k.icon ? <i data-lucide={k.icon} className="w-4 h-4"></i> : k.l}
