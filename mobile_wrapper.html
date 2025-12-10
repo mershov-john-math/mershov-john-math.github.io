@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GamePort Mobile Wrapper</title>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* Prevent pull-to-refresh on mobile */
+        body {
+            overscroll-behavior-y: contain;
+            background-color: #111;
+            color: white;
+            overflow: hidden;
+            touch-action: none; /* Disable default touch actions */
+        }
+        
+        /* Key Styles */
+        .kb-key {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: white;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            transition: all 0.05s;
+            font-size: 14px;
+            box-shadow: 0 2px 0 rgba(0,0,0,0.3);
+        }
+        .kb-key:active {
+            background: rgba(255, 255, 255, 0.4);
+            transform: translateY(2px);
+            box-shadow: 0 0 0 rgba(0,0,0,0.3);
+        }
+        .kb-key.special {
+            background: rgba(100, 116, 139, 0.4);
+            font-size: 12px;
+        }
+        .kb-key.space {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Hide scrollbars for iframe */
+        iframe {
+            border: none;
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Scrollable container for keyboard if screen is tiny */
+        .kb-container {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+
+    const { useState, useEffect, useRef } = React;
+
+    function App() {
+        const [url, setUrl] = useState(''); 
+        const [loadedUrl, setLoadedUrl] = useState(''); 
+        const [controlsVisible, setControlsVisible] = useState(true);
+        const [opacity, setOpacity] = useState(0.9);
+        const [showSettings, setShowSettings] = useState(true);
+        const [showWarning, setShowWarning] = useState(false);
+        const iframeRef = useRef(null);
+
+        useEffect(() => {
+            lucide.createIcons();
+        }, [showSettings, controlsVisible, showWarning]);
+
+        const loadSite = (e) => {
+            e.preventDefault();
+            let target = url;
+            if (!target) return;
+            if (!target.startsWith('http')) {
+                target = 'https://' + target;
+            }
+            setLoadedUrl(target);
+            setShowSettings(false);
+            
+            // Check for potential CORS issues (basic check)
+            try {
+                const targetHost = new URL(target).hostname;
+                if (targetHost !== window.location.hostname && window.location.protocol !== 'file:') {
+                    setShowWarning(true);
+                }
+            } catch(e) {}
+        };
+
+        // Key Simulator Logic
+        const simulateKey = (keyName, code, keyCode) => {
+            if (!iframeRef.current) return;
+
+            try {
+                const iframeWin = iframeRef.current.contentWindow;
+                iframeWin.focus();
+                
+                const eventConfig = {
+                    key: keyName,
+                    code: code,
+                    keyCode: keyCode,
+                    which: keyCode,
+                    bubbles: true,
+                    cancelable: true,
+                    view: iframeWin
+                };
+
+                const eventDown = new KeyboardEvent('keydown', eventConfig);
+                const eventPress = new KeyboardEvent('keypress', eventConfig);
+                const eventUp = new KeyboardEvent('keyup', eventConfig);
+
+                iframeWin.document.dispatchEvent(eventDown);
+                iframeWin.document.dispatchEvent(eventPress);
+                
+                setTimeout(() => {
+                    iframeWin.document.dispatchEvent(eventUp);
+                }, 50);
+
+            } catch (err) {
+                console.warn("Blocked by browser security (CORS). Keys only work on same-origin iframes.");
+            }
+        };
+
+        // Keyboard Layout Data
+        const keys = [
+            // Row 1
+            [
+                { l: 'Esc', c: 'Escape', k: 27, w: '1' },
+                { l: '1', c: 'Digit1', k: 49, w: '1' },
+                { l: '2', c: 'Digit2', k: 50, w: '1' },
+                { l: '3', c: 'Digit3', k: 51, w: '1' },
+                { l: '4', c: 'Digit4', k: 52, w: '1' },
+                { l: '5', c: 'Digit5', k: 53, w: '1' },
+                { l: '6', c: 'Digit6', k: 54, w: '1' },
+                { l: '7', c: 'Digit7', k: 55, w: '1' },
+                { l: '8', c: 'Digit8', k: 56, w: '1' },
+                { l: '9', c: 'Digit9', k: 57, w: '1' },
+                { l: '0', c: 'Digit0', k: 48, w: '1' },
+                { l: '←', c: 'Backspace', k: 8, w: '1.5', s: true },
+            ],
+            // Row 2
+            [
+                { l: 'Tab', c: 'Tab', k: 9, w: '1.5', s: true },
+                { l: 'Q', c: 'KeyQ', k: 81, w: '1' },
+                { l: 'W', c: 'KeyW', k: 87, w: '1' },
+                { l: 'E', c: 'KeyE', k: 69, w: '1' },
+                { l: 'R', c: 'KeyR', k: 82, w: '1' },
+                { l: 'T', c: 'KeyT', k: 84, w: '1' },
+                { l: 'Y', c: 'KeyY', k: 89, w: '1' },
+                { l: 'U', c: 'KeyU', k: 85, w: '1' },
+                { l: 'I', c: 'KeyI', k: 73, w: '1' },
+                { l: 'O', c: 'KeyO', k: 79, w: '1' },
+                { l: 'P', c: 'KeyP', k: 80, w: '1' },
+                { l: '{', c: 'BracketLeft', k: 219, w: '1' },
+                { l: '}', c: 'BracketRight', k: 221, w: '1' },
+            ],
+            // Row 3
+            [
+                { l: 'Caps', c: 'CapsLock', k: 20, w: '1.8', s: true },
+                { l: 'A', c: 'KeyA', k: 65, w: '1' },
+                { l: 'S', c: 'KeyS', k: 83, w: '1' },
+                { l: 'D', c: 'KeyD', k: 68, w: '1' },
+                { l: 'F', c: 'KeyF', k: 70, w: '1' },
+                { l: 'G', c: 'KeyG', k: 71, w: '1' },
+                { l: 'H', c: 'KeyH', k: 72, w: '1' },
+                { l: 'J', c: 'KeyJ', k: 74, w: '1' },
+                { l: 'K', c: 'KeyK', k: 75, w: '1' },
+                { l: 'L', c: 'KeyL', k: 76, w: '1' },
+                { l: ';', c: 'Semicolon', k: 186, w: '1' },
+                { l: 'Enter', c: 'Enter', k: 13, w: '2', s: true },
+            ],
+            // Row 4
+            [
+                { l: 'Shift', c: 'ShiftLeft', k: 16, w: '2.3', s: true },
+                { l: 'Z', c: 'KeyZ', k: 90, w: '1' },
+                { l: 'X', c: 'KeyX', k: 88, w: '1' },
+                { l: 'C', c: 'KeyC', k: 67, w: '1' },
+                { l: 'V', c: 'KeyV', k: 86, w: '1' },
+                { l: 'B', c: 'KeyB', k: 66, w: '1' },
+                { l: 'N', c: 'KeyN', k: 78, w: '1' },
+                { l: 'M', c: 'KeyM', k: 77, w: '1' },
+                { l: '<', c: 'Comma', k: 188, w: '1' },
+                { l: '>', c: 'Period', k: 190, w: '1' },
+                { l: 'Up', c: 'ArrowUp', k: 38, w: '1.5', s: true, icon: 'arrow-up' },
+            ],
+            // Row 5
+            [
+                { l: 'Ctrl', c: 'ControlLeft', k: 17, w: '1.5', s: true },
+                { l: 'Alt', c: 'AltLeft', k: 18, w: '1.5', s: true },
+                { l: 'Space', c: 'Space', k: 32, w: '6', s: true, cls: 'space' },
+                { l: 'Left', c: 'ArrowLeft', k: 37, w: '1.5', s: true, icon: 'arrow-left' },
+                { l: 'Down', c: 'ArrowDown', k: 40, w: '1.5', s: true, icon: 'arrow-down' },
+                { l: 'Right', c: 'ArrowRight', k: 39, w: '1.5', s: true, icon: 'arrow-right' },
+            ]
+        ];
+
+        return (
+            <div className="relative w-full h-screen flex flex-col bg-gray-900 overflow-hidden">
+                
+                {/* Navbar / Settings */}
+                <div className={`${showSettings ? 'translate-y-0' : '-translate-y-full'} transition-transform duration-300 absolute top-0 left-0 right-0 z-50 bg-gray-800 border-b border-gray-700 p-2 shadow-lg`}>
+                    <form onSubmit={loadSite} className="flex gap-2 mb-2">
+                        <input 
+                            type="text" 
+                            value={url}
+                            onChange={(e) => setUrl(e.target.value)}
+                            className="flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            placeholder="https://example.com/game"
+                        />
+                        <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded font-bold">
+                            GO
+                        </button>
+                    </form>
+                    
+                    <div className="flex items-center justify-between text-sm text-gray-300">
+                        <div className="flex items-center gap-2">
+                            <span>Opacity:</span>
+                            <input 
+                                type="range" 
+                                min="0.1" 
+                                max="1" 
+                                step="0.1" 
+                                value={opacity} 
+                                onChange={(e) => setOpacity(e.target.value)}
+                                className="w-24"
+                            />
+                        </div>
+                        <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white">
+                            Hide Menu
+                        </button>
+                    </div>
+                </div>
+
+                {/* Warning Modal */}
+                {showWarning && (
+                    <div className="absolute top-16 left-4 right-4 z-50 bg-yellow-900/90 border border-yellow-600 text-yellow-100 p-4 rounded shadow-xl backdrop-blur-sm">
+                        <div className="flex justify-between items-start mb-2">
+                            <h3 className="font-bold flex items-center gap-2">
+                                <i data-lucide="alert-triangle" className="w-5 h-5"></i>
+                                Compatibility Warning
+                            </h3>
+                            <button onClick={() => setShowWarning(false)}><i data-lucide="x" className="w-5 h-5"></i></button>
+                        </div>
+                        <p className="text-sm">
+                            Browser security (CORS) usually blocks virtual keyboards from working on external websites (like {new URL(loadedUrl).hostname}). 
+                        </p>
+                        <p className="text-xs mt-2 opacity-75">
+                            * This app works best if hosted on the same server as the game.
+                        </p>
+                    </div>
+                )}
+
+                {/* Show Menu Toggle */}
+                {!showSettings && (
+                    <button 
+                        onClick={() => setShowSettings(true)} 
+                        className="absolute top-2 left-1/2 transform -translate-x-1/2 z-40 bg-gray-800/80 text-white px-3 py-1 rounded-full text-xs backdrop-blur-sm border border-gray-600"
+                    >
+                        Menu
+                    </button>
+                )}
+
+                {/* Main Content: Iframe */}
+                <div className="flex-1 relative bg-black">
+                    {loadedUrl ? (
+                        <iframe 
+                            ref={iframeRef}
+                            src={loadedUrl} 
+                            title="Game View"
+                            sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-pointer-lock"
+                        />
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-full text-gray-500 p-8 text-center">
+                            <i data-lucide="gamepad-2" className="w-16 h-16 mb-4 opacity-50"></i>
+                            <p className="text-lg">Enter a game URL to start</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Virtual Keyboard Overlay */}
+                {controlsVisible && (
+                    <div 
+                        className="fixed bottom-0 left-0 right-0 z-30 flex flex-col justify-end kb-container pointer-events-none"
+                    >
+                        <div 
+                            className="bg-black/30 backdrop-blur-sm p-1 pb-4 pointer-events-auto border-t border-white/10"
+                            style={{ opacity: opacity }}
+                        >
+                            <div className="max-w-4xl mx-auto flex flex-col gap-1">
+                                {keys.map((row, rIdx) => (
+                                    <div key={rIdx} className="flex gap-1 justify-center w-full">
+                                        {row.map((k, kIdx) => (
+                                            <button 
+                                                key={kIdx}
+                                                className={`kb-key ${k.s ? 'special' : ''} ${k.cls || ''}`}
+                                                style={{ flex: k.w }}
+                                                onTouchStart={(e) => {
+                                                    e.preventDefault(); // Prevent focus stealing
+                                                    simulateKey(k.c, k.c, k.k);
+                                                }}
+                                                onMouseDown={(e) => {
+                                                    e.preventDefault();
+                                                    simulateKey(k.c, k.c, k.k);
+                                                }}
+                                            >
+                                                {k.icon ? <i data-lucide={k.icon} className="w-4 h-4"></i> : k.l}
+                                            </button>
+                                        ))}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Control Toggle */}
+                <button 
+                    onClick={() => setControlsVisible(!controlsVisible)}
+                    className="fixed bottom-48 right-4 z-50 bg-gray-800/50 p-3 rounded-full border border-gray-600 text-white hover:bg-gray-700 backdrop-blur-sm"
+                >
+                    <i data-lucide={controlsVisible ? "keyboard" : "keyboard-off"} className="w-6 h-6"></i>
+                </button>
+
+            </div>
+        );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+</script>
+</body>
+</html>
