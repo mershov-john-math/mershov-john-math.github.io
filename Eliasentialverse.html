@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eliasentialverse - The Healthy Cereal Metaverse</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        
+        /* UI Overlays */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+            background: rgba(255, 255, 255, 0.8); border-radius: 50%;
+            transform: translate(-50%, -50%); border: 2px solid #333;
+            z-index: 10;
+        }
+
+        #hud {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(0, 0, 0, 0.5); color: white; padding: 15px;
+            border-radius: 10px; pointer-events: auto;
+            border: 2px solid #FFD700;
+        }
+        .stat { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+        .sub-stat { font-size: 14px; color: #ddd; }
+
+        #interaction-msg {
+            position: absolute; top: 60%; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7); color: #fff; padding: 10px 20px;
+            border-radius: 20px; font-size: 16px; opacity: 0; transition: opacity 0.2s;
+            pointer-events: none;
+        }
+
+        #start-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 165, 0, 0.9); display: flex; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 100;
+            pointer-events: auto; text-align: center; color: white;
+        }
+        h1 { font-size: 60px; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        p { font-size: 20px; max-width: 600px; line-height: 1.5; }
+        .btn {
+            background: white; color: orange; border: none; padding: 15px 40px;
+            font-size: 24px; font-weight: bold; border-radius: 30px; cursor: pointer;
+            margin-top: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            transition: transform 0.1s;
+        }
+        .btn:hover { transform: scale(1.05); }
+
+        /* Shop & Inventory UI */
+        #shop-panel, #house-panel {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 500px; height: 400px; background: white; border-radius: 15px;
+            display: none; flex-direction: column; pointer-events: auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5); overflow: hidden;
+            z-index: 50; border: 4px solid orange;
+        }
+        .panel-header {
+            background: orange; color: white; padding: 15px; font-size: 24px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .close-btn { cursor: pointer; font-weight: bold; }
+        .panel-content { padding: 20px; overflow-y: auto; flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;}
+        
+        .item-card {
+            border: 1px solid #ddd; border-radius: 8px; padding: 10px;
+            text-align: center; cursor: pointer; transition: background 0.2s;
+            background: #f9f9f9;
+        }
+        .item-card:hover { background: #ffeebb; }
+        .item-name { font-weight: bold; color: #333; }
+        .item-price { color: green; font-weight: bold; }
+        .buy-btn {
+            background: orange; color: white; border: none; padding: 5px 10px;
+            border-radius: 5px; margin-top: 5px; cursor: pointer; width: 100%;
+        }
+        .buy-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+        #notification {
+            position: absolute; bottom: 30px; right: 30px;
+            background: #4CAF50; color: white; padding: 15px 25px;
+            border-radius: 8px; transform: translateX(200%); transition: transform 0.3s;
+        }
+        #notification.show { transform: translateX(0); }
+
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div id="crosshair"></div>
+        
+        <div id="hud">
+            <div class="stat">Crunch Coins: <span id="score-display">0</span></div>
+            <div class="sub-stat">Current Zone: <span id="zone-display">Plaza</span></div>
+            <div class="sub-stat" id="controls-hint">WASD to Move | Space to Jump | E to Interact</div>
+            <div class="sub-stat" id="edit-hint" style="display:none; color: yellow;">[I] Toggle Inventory/Edit Mode</div>
+        </div>
+
+        <div id="interaction-msg">Press E to Interact</div>
+        <div id="notification">Notification</div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen">
+        <h1>Eliasentialverse</h1>
+        <p>Welcome to the healthy cereal metaverse! Explore the world, collect Crunch Coins, complete the Spoon Parkour, buy furniture, and decorate your Dream House.</p>
+        <button class="btn" id="start-btn">Enter World</button>
+    </div>
+
+    <!-- Shop Panel -->
+    <div id="shop-panel">
+        <div class="panel-header">
+            <span>The Cereal Shop</span>
+            <span class="close-btn" onclick="toggleShop(false)">X</span>
+        </div>
+        <div class="panel-content" id="shop-items">
+            <!-- Items injected by JS -->
+        </div>
+    </div>
+
+    <!-- House Inventory Panel -->
+    <div id="house-panel">
+        <div class="panel-header">
+            <span>Decorate Your House</span>
+            <span class="close-btn" onclick="toggleHousePanel(false)">X</span>
+        </div>
+        <div style="padding: 10px; background: #eee; font-size: 14px;">Click an item to place it. Press 'R' to rotate placement.</div>
+        <div class="panel-content" id="inventory-items">
+            <!-- Inventory Items injected by JS -->
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
+        import { PointerLockControls } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/controls/PointerLockControls.js';
+
+        // --- GLOBAL VARIABLES ---
+        let camera, scene, renderer, controls;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, canJump = false;
+        let prevTime = performance.now();
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
+        let raycaster;
+        
+        // Game State
+        const state = {
+            coins: 0,
+            inventory: [],
+            placedItems: [],
+            inHouse: false,
+            isEditing: false
+        };
+
+        // World Objects
+        const interactables = [];
+        const colliders = []; // Things you can stand on
+        const collectibles = [];
+        let ghostMesh = null; // For placing furniture
+        let ghostRotation = 0;
+
+        // Assets / Item Database
+        const itemsDB = [
+            { id: 'lamp', name: 'Milk Carton Lamp', price: 10, color: 0xffffff, scale: [0.5, 1.5, 0.5], type: 'box' },
+            { id: 'chair', name: 'Spoon Chair', price: 25, color: 0x8B4513, scale: [1, 1, 1], type: 'chair_shape' },
+            { id: 'table', name: 'Wheat Table', price: 50, color: 0xDAA520, scale: [2, 1, 2], type: 'table_shape' },
+            { id: 'plant', name: 'Healthy Fern', price: 15, color: 0x228B22, scale: [0.5, 2, 0.5], type: 'box' },
+            { id: 'trophy', name: 'Golden Bowl', price: 100, color: 0xFFD700, scale: [0.8, 0.8, 0.8], type: 'sphere' }
+        ];
+
+        // --- INITIALIZATION ---
+        init();
+        animate();
+
+        function init() {
+            // Scene Setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); // Sky blue
+            scene.fog = new THREE.Fog(0x87CEEB, 10, 100);
+
+            // Lighting
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
+            scene.add(hemiLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(50, 200, 100);
+            dirLight.castShadow = true;
+            // Shadow optimization
+            dirLight.shadow.camera.top = 50;
+            dirLight.shadow.camera.bottom = -50;
+            dirLight.shadow.camera.left = -50;
+            dirLight.shadow.camera.right = 50;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.y = 2;
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // Controls
+            controls = new PointerLockControls(camera, document.body);
+            
+            const startBtn = document.getElementById('start-btn');
+            startBtn.addEventListener('click', () => {
+                controls.lock();
+                document.getElementById('start-screen').style.display = 'none';
+            });
+
+            controls.addEventListener('lock', () => {
+                // Game Active
+            });
+            controls.addEventListener('unlock', () => {
+                // Game Paused / UI Open
+                if (!isUIOpen()) {
+                    document.getElementById('start-screen').style.display = 'flex';
+                }
+            });
+
+            // Physics Raycaster (Downwards for jumping)
+            raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2);
+
+            // Interaction Raycaster (Forwards)
+            window.interactionRaycaster = new THREE.Raycaster();
+
+            // --- WORLD GENERATION ---
+            createGround();
+            createPlaza();
+            createShop();
+            createHouse();
+            createParkour();
+            generateCollectibles();
+
+            // --- EVENT LISTENERS ---
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('click', onMouseClick);
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        // --- WORLD BUILDING FUNCTIONS ---
+
+        function createGround() {
+            // Main Grass
+            const geometry = new THREE.PlaneGeometry(200, 200);
+            geometry.rotateX(-Math.PI / 2);
+            
+            // Create a procedural grass texture
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const context = canvas.getContext('2d');
+            context.fillStyle = '#4CAF50';
+            context.fillRect(0,0,512,512);
+            // Add noise
+            for(let i=0; i<5000; i++) {
+                context.fillStyle = Math.random() > 0.5 ? '#45a049' : '#55b559';
+                const x = Math.random()*512;
+                const y = Math.random()*512;
+                context.fillRect(x,y, 4, 4);
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(20, 20);
+
+            const material = new THREE.MeshStandardMaterial({ map: texture });
+            const ground = new THREE.Mesh(geometry, material);
+            ground.receiveShadow = true;
+            scene.add(ground);
+            colliders.push(ground);
+
+            // Milk River
+            const riverGeo = new THREE.PlaneGeometry(50, 200);
+            riverGeo.rotateX(-Math.PI / 2);
+            const riverMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1, metalness: 0.1 });
+            const river = new THREE.Mesh(riverGeo, riverMat);
+            river.position.set(60, 0.05, 0); // Offset to the right
+            scene.add(river);
+        }
+
+        function createPlaza() {
+            // Central Fountain / Statue Area
+            const baseGeo = new THREE.CylinderGeometry(5, 5, 1, 32);
+            const baseMat = new THREE.MeshStandardMaterial({ color: 0x888888 });
+            const base = new THREE.Mesh(baseGeo, baseMat);
+            base.position.set(0, 0.5, 0);
+            base.receiveShadow = true;
+            scene.add(base);
+            colliders.push(base);
+
+            // Billboard
+            const poleGeo = new THREE.CylinderGeometry(0.5, 0.5, 10);
+            const pole = new THREE.Mesh(poleGeo, baseMat);
+            pole.position.set(0, 5, 0);
+            scene.add(pole);
+
+            const boardGeo = new THREE.BoxGeometry(16, 8, 1);
+            
+            // Dynamic Canvas for Text
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#FF9800'; // Brand Orange
+            ctx.fillRect(0, 0, 1024, 512);
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 80px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("ELIASENTIALVERSE", 512, 150);
+            ctx.font = '40px Arial';
+            ctx.fillText("Healthy Cereal for a Healthy Life!", 512, 250);
+            ctx.fillStyle = '#FFF8E1';
+            ctx.font = 'italic 30px Arial';
+            ctx.fillText("Visit the shop to customize your home!", 512, 350);
+            
+            const boardTex = new THREE.CanvasTexture(canvas);
+            const boardMat = new THREE.MeshStandardMaterial({ map: boardTex });
+            const board = new THREE.Mesh(boardGeo, boardMat);
+            board.position.set(0, 10, 0);
+            scene.add(board);
+        }
+
+        function createShop() {
+            const shopGroup = new THREE.Group();
+            shopGroup.position.set(-20, 0, -20);
+
+            // Building
+            const buildGeo = new THREE.BoxGeometry(15, 10, 15);
+            const buildMat = new THREE.MeshStandardMaterial({ color: 0xFF5722 }); // Deep Orange
+            const building = new THREE.Mesh(buildGeo, buildMat);
+            building.position.y = 5;
+            building.castShadow = true;
+            building.receiveShadow = true;
+            shopGroup.add(building);
+            colliders.push(building); // Simple collision (can jump on roof)
+
+            // Shop Keeper / Interaction Point
+            const counterGeo = new THREE.BoxGeometry(4, 2, 2);
+            const counterMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const counter = new THREE.Mesh(counterGeo, counterMat);
+            counter.position.set(0, 1, 8); // Front of shop
+            shopGroup.add(counter);
+
+            // NPC (Cube style)
+            const npcGeo = new THREE.BoxGeometry(1, 2, 1);
+            const npcMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            const npc = new THREE.Mesh(npcGeo, npcMat);
+            npc.position.set(0, 2.5, 8.5);
+            shopGroup.add(npc);
+
+            // Interaction Zone
+            const zone = new THREE.Mesh(
+                new THREE.BoxGeometry(6, 6, 6),
+                new THREE.MeshBasicMaterial({ visible: false })
+            );
+            zone.position.set(0, 3, 8);
+            zone.userData = { type: 'shop' };
+            interactables.push(zone);
+            shopGroup.add(zone);
+
+            // Label
+            const labelCanvas = document.createElement('canvas');
+            const ctx = labelCanvas.getContext('2d');
+            labelCanvas.width = 256; labelCanvas.height = 64;
+            ctx.fillStyle = 'white';
+            ctx.font = '40px Arial';
+            ctx.fillText("SHOP", 10, 50);
+            const labelTex = new THREE.CanvasTexture(labelCanvas);
+            const label = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.5), new THREE.MeshBasicMaterial({map: labelTex, transparent:true}));
+            label.position.set(0, 7, 8);
+            shopGroup.add(label);
+
+            scene.add(shopGroup);
+        }
+
+        function createHouse() {
+            const houseGroup = new THREE.Group();
+            houseGroup.position.set(-20, 0, 20);
+
+            // Floor
+            const floorGeo = new THREE.BoxGeometry(20, 0.5, 20);
+            const floorMat = new THREE.MeshStandardMaterial({ color: 0xDEB887 }); // Wood
+            const floor = new THREE.Mesh(floorGeo, floorMat);
+            floor.position.y = 0.25;
+            floor.receiveShadow = true;
+            houseGroup.add(floor);
+            colliders.push(floor);
+
+            // Walls (Open concept)
+            const wallGeo = new THREE.BoxGeometry(1, 8, 20);
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0xFFFDD0 }); // Cream
+            
+            // Wall 1 (Left)
+            const wall1 = new THREE.Mesh(wallGeo, wallMat);
+            wall1.position.set(-9.5, 4, 0);
+            houseGroup.add(wall1);
+
+            // Wall 2 (Back)
+            const wall2 = new THREE.Mesh(new THREE.BoxGeometry(20, 8, 1), wallMat);
+            wall2.position.set(0, 4, -9.5);
+            houseGroup.add(wall2);
+
+            // Wall 3 (Right)
+            const wall3 = new THREE.Mesh(wallGeo, wallMat);
+            wall3.position.set(9.5, 4, 0);
+            houseGroup.add(wall3);
+
+            // Wall 4 (Front) - Split for door
+            const frontWallLeft = new THREE.Mesh(new THREE.BoxGeometry(8, 8, 1), wallMat);
+            frontWallLeft.position.set(-6, 4, 9.5);
+            houseGroup.add(frontWallLeft);
+
+            const frontWallRight = new THREE.Mesh(new THREE.BoxGeometry(8, 8, 1), wallMat);
+            frontWallRight.position.set(6, 4, 9.5);
+            houseGroup.add(frontWallRight);
+
+            // Door Header
+            const doorHeader = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 1), wallMat);
+            doorHeader.position.set(0, 7, 9.5);
+            houseGroup.add(doorHeader);
+
+            // Roof
+            const roofGeo = new THREE.ConeGeometry(15, 6, 4);
+            const roofMat = new THREE.MeshStandardMaterial({ color: 0xA52A2A });
+            const roof = new THREE.Mesh(roofGeo, roofMat);
+            roof.position.y = 11;
+            roof.rotation.y = Math.PI / 4;
+            houseGroup.add(roof);
+
+            // House Zone Trigger (Invisible box filling the house)
+            const zone = new THREE.Mesh(
+                new THREE.BoxGeometry(18, 8, 18),
+                new THREE.MeshBasicMaterial({ visible: false, wireframe: true })
+            );
+            zone.position.set(0, 4, 0);
+            zone.userData = { type: 'house_zone' };
+            interactables.push(zone); // Not clickable, but we check distance to center manually in update
+            houseGroup.add(zone);
+
+            // Store house group reference for placing items relative to it
+            window.houseGroup = houseGroup;
+            scene.add(houseGroup);
+        }
+
+        function createParkour() {
+            // Floating Spoons and Cereal Loops over the milk river (x: 60)
+            
+            // Platform 1: Giant Spoon
+            createPlatform(60, 2, -10, 'spoon');
+            createPlatform(60, 4, 0, 'loop');
+            createPlatform(60, 6, 10, 'spoon');
+            createPlatform(60, 8, 20, 'loop');
+            createPlatform(50, 10, 30, 'box'); // Treasure platform
+            
+            // Big Reward at top
+            createCollectible(50, 12, 30, true);
+        }
+
+        function createPlatform(x, y, z, type) {
+            let mesh;
+            if (type === 'spoon') {
+                const handleGeo = new THREE.CylinderGeometry(0.2, 0.2, 6);
+                handleGeo.rotateX(Math.PI/2);
+                const handle = new THREE.Mesh(handleGeo, new THREE.MeshStandardMaterial({color: 0xcccccc}));
+                
+                const bowlGeo = new THREE.SphereGeometry(2, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5);
+                bowlGeo.rotateX(Math.PI);
+                const bowl = new THREE.Mesh(bowlGeo, new THREE.MeshStandardMaterial({color: 0xeeeeee}));
+                bowl.position.set(3, 0, 0);
+                
+                mesh = new THREE.Group();
+                mesh.add(handle);
+                mesh.add(bowl);
+
+                // Add invisible collider box for easier physics
+                const collider = new THREE.Mesh(new THREE.BoxGeometry(8, 0.5, 4), new THREE.MeshBasicMaterial({visible:false}));
+                collider.position.set(1.5, 0, 0);
+                mesh.add(collider);
+                colliders.push(collider); // Physics checks world position
+            } else if (type === 'loop') {
+                const geo = new THREE.TorusGeometry(2.5, 0.8, 16, 32);
+                geo.rotateX(Math.PI/2);
+                const mat = new THREE.MeshStandardMaterial({color: Math.random() > 0.5 ? 0xFF69B4 : 0xADFF2F});
+                mesh = new THREE.Mesh(geo, mat);
+                colliders.push(mesh);
+            } else {
+                const geo = new THREE.BoxGeometry(6, 1, 6);
+                const mat = new THREE.MeshStandardMaterial({color: 0xFFD700});
+                mesh = new THREE.Mesh(geo, mat);
+                colliders.push(mesh);
+            }
+
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+        }
+
+        function generateCollectibles() {
+            // Scattered random coins
+            for(let i=0; i<30; i++) {
+                const x = (Math.random() - 0.5) * 100;
+                const z = (Math.random() - 0.5) * 100;
+                // Avoid river area roughly
+                if (x > 35 && x < 85) continue; 
+                createCollectible(x, 1, z);
+            }
+        }
+
+        function createCollectible(x, y, z, isBig = false) {
+            const size = isBig ? 1.5 : 0.5;
+            const geo = new THREE.BoxGeometry(size, size*1.4, size*0.2);
+            // Cereal box look
+            const mat = new THREE.MeshStandardMaterial({ color: isBig ? 0xFFD700 : 0xFF9800 }); 
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y, z);
+            mesh.userData = { 
+                type: 'coin', 
+                value: isBig ? 50 : 10, 
+                rotationSpeed: Math.random() * 0.02 + 0.01 
+            };
+            scene.add(mesh);
+            collectibles.push(mesh);
+        }
+
+        // --- GAME LOGIC ---
+
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'ArrowUp': case 'KeyW': moveForward = true; break;
+                case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
+                case 'ArrowDown': case 'KeyS': moveBackward = true; break;
+                case 'ArrowRight': case 'KeyD': moveRight = true; break;
+                case 'Space': if (canJump) velocity.y += 30; canJump = false; break;
+                case 'KeyE': interact(); break;
+                case 'KeyI': if(state.inHouse) toggleHousePanel(!state.isEditing); break;
+                case 'KeyR': if(state.isEditing) rotateGhost(); break;
+            }
+        }
+
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'ArrowUp': case 'KeyW': moveForward = false; break;
+                case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
+                case 'ArrowDown': case 'KeyS': moveBackward = false; break;
+                case 'ArrowRight': case 'KeyD': moveRight = false; break;
+            }
+        }
+
+        function onMouseClick(event) {
+            if (state.isEditing && ghostMesh && ghostMesh.visible) {
+                placeItem();
+            } else if (!controls.isLocked && !isUIOpen()) {
+                controls.lock();
+                document.getElementById('start-screen').style.display = 'none';
+            }
+        }
+
+        function rotateGhost() {
+            ghostRotation += Math.PI / 4;
+        }
+
+        function interact() {
+            // Raycast forward
+            const camPos = camera.position;
+            const camDir = new THREE.Vector3();
+            camera.getWorldDirection(camDir);
+            window.interactionRaycaster.set(camPos, camDir);
+
+            const intersects = window.interactionRaycaster.intersectObjects(interactables);
+            if (intersects.length > 0) {
+                const dist = intersects[0].distance;
+                if (dist < 5) {
+                    const type = intersects[0].object.userData.type;
+                    if (type === 'shop') {
+                        toggleShop(true);
+                    }
+                }
+            }
+        }
+
+        function updatePhysics(delta) {
+            velocity.x -= velocity.x * 10.0 * delta;
+            velocity.z -= velocity.z * 10.0 * delta;
+            velocity.y -= 9.8 * 10.0 * delta; // Gravity
+
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
+
+            if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+
+            controls.moveRight(-velocity.x * delta);
+            controls.moveForward(-velocity.z * delta);
+
+            // Ground Collision
+            controls.getObject().position.y += (velocity.y * delta); 
+
+            // Simple floor check (ground is at 0)
+            let onObject = false;
+            
+            // Raycast down to check for platforms/objects
+            raycaster.ray.origin.copy(controls.getObject().position);
+            // Slightly lift origin so we don't raycast from inside the floor
+            //raycaster.ray.origin.y -= 1; 
+
+            // Collect all objects that are solid
+            const intersections = raycaster.intersectObjects(colliders, true); // true for recursive (groups)
+            
+            if (intersections.length > 0) {
+                const dist = intersections[0].distance;
+                // Player height is approx 2 (camera y). If dist to ground is < 2, we land.
+                if (dist < 2 && velocity.y < 0) {
+                    velocity.y = Math.max(0, velocity.y);
+                    controls.getObject().position.y = intersections[0].point.y + 2;
+                    canJump = true;
+                    onObject = true;
+                }
+            }
+
+            // Fallback for main ground plane at y=0 if missed by raycast
+            if (controls.getObject().position.y < 2) {
+                velocity.y = 0;
+                controls.getObject().position.y = 2;
+                canJump = true;
+            }
+        }
+
+        function updateLogic(time) {
+            // Collectibles
+            const playerPos = controls.getObject().position;
+            
+            // Reverse loop to remove items
+            for (let i = collectibles.length - 1; i >= 0; i--) {
+                const c = collectibles[i];
+                c.rotation.y += c.userData.rotationSpeed;
+                c.position.y = c.position.y + Math.sin(time * 5) * 0.005;
+
+                if (playerPos.distanceTo(c.position) < 2) {
+                    // Collect
+                    state.coins += c.userData.value;
+                    updateHUD();
+                    scene.remove(c);
+                    collectibles.splice(i, 1);
+                    showNotification(`Collected ${c.userData.value} Coins!`);
+                }
+            }
+
+            // House Zone Check
+            // Hardcoded house position is (-20, 0, 20), size approx 20x20
+            const dx = Math.abs(playerPos.x - (-20));
+            const dz = Math.abs(playerPos.z - 20);
+            
+            if (dx < 10 && dz < 10) {
+                if (!state.inHouse) {
+                    state.inHouse = true;
+                    document.getElementById('edit-hint').style.display = 'block';
+                    document.getElementById('zone-display').innerText = "My House";
+                }
+            } else {
+                if (state.inHouse) {
+                    state.inHouse = false;
+                    state.isEditing = false;
+                    document.getElementById('edit-hint').style.display = 'none';
+                    document.getElementById('house-panel').style.display = 'none';
+                    if(ghostMesh) scene.remove(ghostMesh);
+                    controls.lock(); // Re-lock if leaving
+                    document.getElementById('zone-display').innerText = "Eliasential World";
+                }
+            }
+
+            // Interaction Message
+            let showMsg = false;
+            if(!state.isEditing) {
+                const camDir = new THREE.Vector3();
+                camera.getWorldDirection(camDir);
+                window.interactionRaycaster.set(playerPos, camDir);
+                const intersects = window.interactionRaycaster.intersectObjects(interactables);
+                if (intersects.length > 0 && intersects[0].distance < 5) {
+                    showMsg = true;
+                }
+            }
+            document.getElementById('interaction-msg').style.opacity = showMsg ? 1 : 0;
+            
+            // Ghost Mesh Update
+            if (state.isEditing && ghostMesh) {
+                // Project forward
+                const dir = new THREE.Vector3();
+                camera.getWorldDirection(dir);
+                const targetPos = playerPos.clone().add(dir.multiplyScalar(5));
+                
+                // Snap to grid
+                targetPos.x = Math.round(targetPos.x * 2) / 2;
+                targetPos.y = Math.max(0.5, targetPos.y); // Floor
+                targetPos.z = Math.round(targetPos.z * 2) / 2;
+
+                ghostMesh.position.copy(targetPos);
+                ghostMesh.rotation.y = ghostRotation;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+
+            if (controls.isLocked === true) {
+                updatePhysics(delta);
+            }
+
+            updateLogic(time/1000);
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- UI & GAMEPLAY SYSTEMS ---
+
+        function updateHUD() {
+            document.getElementById('score-display').innerText = state.coins;
+        }
+
+        function showNotification(text) {
+            const n = document.getElementById('notification');
+            n.innerText = text;
+            n.classList.add('show');
+            setTimeout(() => n.classList.remove('show'), 3000);
+        }
+
+        function isUIOpen() {
+            return document.getElementById('shop-panel').style.display === 'flex' ||
+                   document.getElementById('house-panel').style.display === 'flex';
+        }
+
+        // Shop System
+        window.toggleShop = function(show) {
+            const panel = document.getElementById('shop-panel');
+            if (show) {
+                renderShopItems();
+                panel.style.display = 'flex';
+                controls.unlock();
+            } else {
+                panel.style.display = 'none';
+                controls.lock();
+            }
+        }
+
+        function renderShopItems() {
+            const container = document.getElementById('shop-items');
+            container.innerHTML = '';
+            itemsDB.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'item-card';
+                div.innerHTML = `
+                    <div class="item-name">${item.name}</div>
+                    <div class="item-price">${item.price} Coins</div>
+                    <button class="buy-btn" onclick="buyItem('${item.id}')">Buy</button>
+                `;
+                container.appendChild(div);
+                
+                // Check affordability
+                const btn = div.querySelector('button');
+                if (state.coins < item.price) btn.disabled = true;
+            });
+        }
+
+        window.buyItem = function(id) {
+            const item = itemsDB.find(i => i.id === id);
+            if (state.coins >= item.price) {
+                state.coins -= item.price;
+                state.inventory.push(id);
+                updateHUD();
+                renderShopItems(); // Refresh buttons
+                showNotification(`Bought ${item.name}!`);
+            }
+        }
+
+        // House System
+        window.toggleHousePanel = function(show) {
+            const panel = document.getElementById('house-panel');
+            state.isEditing = show;
+            
+            if (show) {
+                renderInventory();
+                panel.style.display = 'flex';
+                controls.unlock();
+            } else {
+                panel.style.display = 'none';
+                if (ghostMesh) {
+                    scene.remove(ghostMesh);
+                    ghostMesh = null;
+                }
+                controls.lock();
+            }
+        }
+
+        function renderInventory() {
+            const container = document.getElementById('inventory-items');
+            container.innerHTML = '';
+            if (state.inventory.length === 0) {
+                container.innerHTML = '<div style="grid-column: span 2; text-align:center;">Inventory is empty. Buy items at the shop!</div>';
+                return;
+            }
+
+            // Count items
+            const counts = {};
+            state.inventory.forEach(id => counts[id] = (counts[id] || 0) + 1);
+
+            Object.keys(counts).forEach(id => {
+                const item = itemsDB.find(i => i.id === id);
+                const div = document.createElement('div');
+                div.className = 'item-card';
+                // FIX: added event.stopPropagation() to prevent immediate placement upon clicking button
+                div.innerHTML = `
+                    <div class="item-name">${item.name}</div>
+                    <div>Qty: ${counts[id]}</div>
+                    <button class="buy-btn" onclick="event.stopPropagation(); selectFurniture('${id}')">Place</button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        window.selectFurniture = function(id) {
+            // Close UI, enter placement mode
+            document.getElementById('house-panel').style.display = 'none';
+            controls.lock();
+            
+            // Create Ghost
+            if (ghostMesh) scene.remove(ghostMesh);
+            
+            const itemData = itemsDB.find(i => i.id === id);
+            ghostMesh = createItemMesh(itemData, true);
+            ghostMesh.userData.itemId = id;
+
+            // FIX: Set initial position immediately in front of player so it doesn't start at 0,0,0
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir);
+            const targetPos = controls.getObject().position.clone().add(dir.multiplyScalar(5));
+            
+            // Apply grid snap immediately
+            targetPos.x = Math.round(targetPos.x * 2) / 2;
+            targetPos.y = Math.max(0.5, targetPos.y); 
+            targetPos.z = Math.round(targetPos.z * 2) / 2;
+            
+            ghostMesh.position.copy(targetPos);
+
+            scene.add(ghostMesh);
+        }
+
+        function createItemMesh(data, isGhost) {
+            let geometry, material;
+            
+            // Simple geometry factory
+            if (data.type === 'chair_shape') {
+                geometry = new THREE.BoxGeometry(1, 1, 1);
+            } else if (data.type === 'table_shape') {
+                geometry = new THREE.BoxGeometry(2, 1, 1.5);
+            } else if (data.type === 'sphere') {
+                geometry = new THREE.SphereGeometry(0.5, 16, 16);
+            } else {
+                geometry = new THREE.BoxGeometry(1, 1, 1);
+            }
+            
+            // Apply scale from DB
+            geometry.scale(data.scale[0], data.scale[1], data.scale[2]);
+
+            material = new THREE.MeshStandardMaterial({ 
+                color: data.color, 
+                transparent: isGhost, 
+                opacity: isGhost ? 0.5 : 1.0,
+                side: THREE.DoubleSide // Ensure it's visible from all angles
+            });
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+
+            // PIVOT FIX: Use a Group wrapper. 
+            // We calculate height and shift the inner mesh UP by half height.
+            // This ensures the Group's origin (0,0,0) is effectively at the bottom of the object.
+            geometry.computeBoundingBox();
+            const height = geometry.boundingBox.max.y - geometry.boundingBox.min.y;
+            mesh.position.y = height / 2;
+
+            const group = new THREE.Group();
+            group.add(mesh);
+            
+            return group;
+        }
+
+        function placeItem() {
+            if (!ghostMesh) return;
+
+            const id = ghostMesh.userData.itemId;
+            // Remove from inventory
+            const index = state.inventory.indexOf(id);
+            if (index > -1) state.inventory.splice(index, 1);
+
+            // Create solid mesh (Group)
+            const itemData = itemsDB.find(i => i.id === id);
+            const mesh = createItemMesh(itemData, false);
+            mesh.position.copy(ghostMesh.position);
+            mesh.rotation.y = ghostMesh.rotation.y;
+            scene.add(mesh);
+            
+            // Add the entire group to colliders so we can stand on it
+            colliders.push(mesh); 
+
+            state.placedItems.push({ id: id, pos: mesh.position, rot: mesh.rotation.y });
+
+            // Reset ghost
+            scene.remove(ghostMesh);
+            ghostMesh = null;
+            
+            // Re-open inventory
+            controls.unlock();
+            toggleHousePanel(true);
+        }
+
+    </script>
+</body>
+</html>
