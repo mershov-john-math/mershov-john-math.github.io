@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A Little to the Left - Editor & Player</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+            overflow: hidden;
+        }
+        .container-box {
+            height: 90vh;
+            max-width: 95vw;
+        }
+        .level-area {
+            position: relative;
+            background-color: #fff;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            touch-action: none; /* Disable default touch actions */
+        }
+        .draggable-object {
+            position: absolute;
+            cursor: grab;
+            user-select: none;
+            will-change: transform;
+            transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            background-size: cover;
+            background-position: center;
+        }
+        .draggable-object.solved {
+            cursor: default;
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Spring-like snap */
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            z-index: 1000; /* Bring solved objects to the front */
+        }
+        .shadow-overlay {
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 50;
+        }
+        .modal {
+            z-index: 100;
+        }
+    </style>
+</head>
+<body class="p-4 flex flex-col items-center justify-center">
+
+    <header class="w-full max-w-5xl mb-4 text-center">
+        <h1 class="text-3xl font-bold text-gray-800">Organize It!</h1>
+        <p class="text-sm text-gray-500">A Little to the Left - Editor & Player</p>
+    </header>
+
+    <div id="app" class="container-box w-full max-w-5xl flex flex-col md:flex-row gap-4 rounded-xl">
+        <!-- Control Panel -->
+        <div id="control-panel" class="w-full md:w-64 h-full bg-white p-4 rounded-xl shadow-lg flex flex-col space-y-3 overflow-y-auto">
+            <h2 class="text-xl font-semibold mb-2" id="mode-title">Build Mode</h2>
+
+            <!-- Mode Switch -->
+            <div class="flex space-x-2">
+                <button onclick="setMode('build')" class="mode-btn build-btn w-1/2 py-2 rounded-lg font-medium transition duration-150 shadow-md bg-indigo-500 text-white hover:bg-indigo-600">Build</button>
+                <button onclick="setMode('play')" class="mode-btn play-btn w-1/2 py-2 rounded-lg font-medium transition duration-150 shadow-md bg-gray-200 text-gray-800 hover:bg-gray-300">Play</button>
+            </div>
+
+            <hr class="my-2 border-gray-200">
+
+            <!-- Build Mode Controls -->
+            <div id="build-controls" class="space-y-3">
+                <label for="image-upload" class="block text-sm font-medium text-gray-700">Add Object Image</label>
+                <input type="file" id="image-upload" accept="image/*" multiple onchange="handleImageUpload(event)" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-indigo-700 hover:file:bg-violet-100"/>
+                
+                <button onclick="lockFinalPositions()" class="w-full bg-green-500 text-white py-2 rounded-lg font-semibold hover:bg-green-600 transition duration-150 shadow-md">
+                    Lock Final Positions
+                </button>
+
+                <!-- Background Settings -->
+                <div class="space-y-2 pt-2 border-t border-gray-100">
+                    <label class="block text-sm font-medium text-gray-700">Background Style</label>
+                    <input type="color" id="bg-color" value="#ffffff" class="w-full h-10 rounded-lg border-2 border-gray-300 p-0" onchange="updateBackground()">
+                    <button onclick="generateSilhouettes()" class="w-full bg-orange-500 text-white py-2 rounded-lg font-semibold hover:bg-orange-600 transition duration-150 shadow-md">
+                        Generate Silhouettes (For Placement Guide)
+                    </button>
+                </div>
+
+                <hr class="my-2 border-gray-200">
+
+                <!-- Save/Load Level -->
+                <input type="text" id="level-name" placeholder="Enter Level Name" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
+                <button onclick="saveLevel()" class="w-full bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150 shadow-md">
+                    Save Level to Cloud
+                </button>
+            </div>
+
+            <!-- Play Mode Controls -->
+            <div id="play-controls" class="space-y-3 hidden">
+                <h3 class="text-lg font-medium text-gray-700">Load Levels</h3>
+                <select id="level-select" onchange="loadLevelForPlay(this.value)" class="w-full p-2 border border-gray-300 rounded-lg bg-white">
+                    <option value="">-- Select a Level --</option>
+                </select>
+                <button onclick="shuffleAndStartPlay()" class="w-full bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600 transition duration-150 shadow-md">
+                    Shuffle & Start
+                </button>
+                <div id="status-message" class="text-center font-medium pt-2 h-6"></div>
+                <div id="solved-count" class="text-center text-sm text-gray-600"></div>
+            </div>
+            
+            <div class="mt-auto pt-4 border-t border-gray-100 text-xs text-gray-500">
+                User ID: <span id="user-id-display" class="font-mono break-all">Authenticating...</span>
+            </div>
+        </div>
+
+        <!-- Level Area (Canvas/Objects) -->
+        <div id="level-container" class="level-area flex-grow rounded-xl border border-gray-300">
+            <canvas id="silhouette-canvas" class="absolute top-0 left-0 w-full h-full"></canvas>
+            <div id="object-container" class="absolute top-0 left-0 w-full h-full">
+                <!-- Draggable objects will be appended here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Modal for Messages -->
+    <div id="message-modal" class="hidden fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 modal">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 id="modal-title" class="text-xl font-bold mb-3 text-gray-800"></h3>
+            <p id="modal-body" class="mb-4 text-gray-600"></p>
+            <button onclick="closeModal()" class="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700">OK</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- Constants and State ---
+        const BASE_DIM = 100; // Base size in pixels for the LARGEST dimension when scale is 1
+
+        let app, db, auth, userId;
+        let objects = [];
+        let currentMode = 'build';
+        let currentLevel = null;
+        const SNAP_DISTANCE = 50; // Max distance for an object to snap to final position
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        // --- Utility Functions ---
+
+        function showMessage(title, body) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-body').textContent = body;
+            document.getElementById('message-modal').classList.remove('hidden');
+        }
+
+        window.closeModal = function() {
+            document.getElementById('message-modal').classList.add('hidden');
+        }
+
+        function base64ToArrayBuffer(base64) {
+            const binary_string = window.atob(base64.split(',')[1]);
+            const len = binary_string.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary_string.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function pcmToWav(pcm16, sampleRate) {
+            const numChannels = 1;
+            const bitDepth = 16;
+            const buffer = new ArrayBuffer(44 + pcm16.length * 2);
+            const view = new DataView(buffer);
+
+            let offset = 0;
+            const writeString = (str) => {
+                for (let i = 0; i < str.length; i++) {
+                    view.setUint8(offset++, str.charCodeAt(i));
+                }
+            };
+
+            // RIFF chunk
+            writeString('RIFF');
+            view.setUint32(offset, 36 + pcm16.length * 2, true); offset += 4;
+            writeString('WAVE');
+
+            // fmt chunk
+            writeString('fmt ');
+            view.setUint32(offset, 16, true); offset += 4; // Sub-chunk size
+            view.setUint16(offset, 1, true); offset += 2; // Audio format (1=PCM)
+            view.setUint16(offset, numChannels, true); offset += 2;
+            view.setUint32(offset, sampleRate, true); offset += 4;
+            view.setUint32(offset, sampleRate * numChannels * (bitDepth / 8), true); offset += 4; // Byte rate
+            view.setUint16(offset, numChannels * (bitDepth / 8), true); offset += 2; // Block align
+            view.setUint16(offset, bitDepth, true); offset += 2; // Bit depth
+
+            // data chunk
+            writeString('data');
+            view.setUint32(offset, pcm16.length * 2, true); offset += 4;
+            
+            // PCM data
+            for (let i = 0; i < pcm16.length; i++) {
+                view.setInt16(offset, pcm16[i], true); offset += 2;
+            }
+
+            return new Blob([view], { type: 'audio/wav' });
+        }
+        
+        // --- Initialization and Authentication ---
+
+        async function initFirebase() {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase configuration is missing.");
+                    return;
+                }
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // Sign in with custom token or anonymously
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('user-id-display').textContent = userId;
+                        console.log("Authenticated with UID:", userId);
+                        // Start listening for levels once authenticated
+                        listenForLevels();
+                    } else {
+                        console.error("Authentication failed.");
+                        document.getElementById('user-id-display').textContent = 'Error/Unauthenticated';
+                    }
+                });
+
+            } catch (error) {
+                console.error("Error initializing Firebase:", error);
+                showMessage("Setup Error", `Failed to initialize application services. Details: ${error.message}`);
+            }
+        }
+
+        // --- Level Data Management (Firestore) ---
+
+        function getLevelsCollectionRef() {
+            // Public collection path: /artifacts/{appId}/public/data/levels
+            return collection(db, `artifacts/${appId}/public/data/levels`);
+        }
+
+        function listenForLevels() {
+            if (!db) return;
+            const levelsQuery = query(getLevelsCollectionRef());
+            
+            onSnapshot(levelsQuery, (snapshot) => {
+                const levels = [];
+                snapshot.forEach(doc => {
+                    levels.push({ id: doc.id, ...doc.data() });
+                });
+                populateLevelSelect(levels);
+            }, (error) => {
+                console.error("Error listening to levels:", error);
+            });
+        }
+        
+        function populateLevelSelect(levels) {
+            const select = document.getElementById('level-select');
+            select.innerHTML = '<option value="">-- Select a Level --</option>';
+            levels.forEach(level => {
+                const option = document.createElement('option');
+                option.value = level.id;
+                option.textContent = level.name;
+                select.appendChild(option);
+            });
+        }
+        
+        window.saveLevel = async function() {
+            if (!userId) {
+                showMessage("Authentication Required", "Please wait for authentication to complete before saving a level.");
+                return;
+            }
+
+            const levelName = document.getElementById('level-name').value.trim();
+            if (levelName.length < 3) {
+                showMessage("Name Required", "Please enter a name for your level (at least 3 characters).");
+                return;
+            }
+
+            if (objects.length === 0) {
+                 showMessage("No Objects", "Please add some objects before saving the level.");
+                return;
+            }
+
+            // Ensure all objects have final positions set
+            const hasUnsetFinal = objects.some(obj => obj.finalX === null);
+            if (hasUnsetFinal) {
+                showMessage("Final Positions Not Set", "Please click 'Lock Final Positions' before saving.");
+                return;
+            }
+            
+            // Extract only the necessary data for the solution
+            const serializableObjects = objects.map(obj => ({
+                id: obj.id,
+                base64Image: obj.base64Image,
+                finalX: obj.finalX,
+                finalY: obj.finalY,
+                finalScale: obj.finalScale,
+                finalRotation: obj.finalRotation,
+                width: obj.width,
+                height: obj.height,
+            }));
+
+            const levelId = Date.now().toString();
+            const levelData = {
+                name: levelName,
+                createdAt: new Date().toISOString(),
+                createdBy: userId,
+                backgroundStyle: document.getElementById('level-container').style.backgroundColor || '#ffffff',
+                // Serialize the objects array to a JSON string
+                objects: JSON.stringify(serializableObjects)
+            };
+
+            try {
+                const levelDocRef = doc(getLevelsCollectionRef(), levelId);
+                await setDoc(levelDocRef, levelData);
+                showMessage("Level Saved!", `Level "${levelName}" has been saved to the cloud.`);
+            } catch (error) {
+                console.error("Error saving level:", error);
+                showMessage("Save Error", `Failed to save level. Details: ${error.message}`);
+            }
+        }
+        
+        window.loadLevelForPlay = async function(levelId) {
+            if (!levelId) return;
+
+            try {
+                const q = query(getLevelsCollectionRef());
+                const snapshot = await getDocs(q);
+                const level = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).find(l => l.id === levelId);
+
+                if (level) {
+                    // Parse the objects array back from the JSON string
+                    if (typeof level.objects === 'string') {
+                        level.objects = JSON.parse(level.objects);
+                    }
+                    
+                    currentLevel = level;
+                    objects = []; // Clear current objects
+                    document.getElementById('object-container').innerHTML = ''; // Clear DOM
+                    document.getElementById('level-container').style.backgroundColor = level.backgroundStyle;
+                    
+                    // The level is loaded, but not started/shuffled yet.
+                    showMessage("Level Loaded", `Level "${level.name}" is ready to play. Press "Shuffle & Start" to begin.`);
+                } else {
+                    showMessage("Error", "Level not found.");
+                }
+
+            } catch (error) {
+                console.error("Error loading level:", error);
+                showMessage("Load Error", `Failed to load level. Details: ${error.message}`);
+            }
+        }
+
+        // --- Mode Switching ---
+
+        window.setMode = function(mode) {
+            currentMode = mode;
+            document.getElementById('mode-title').textContent = (mode === 'build' ? 'Build Mode' : 'Play Mode');
+            document.getElementById('build-controls').classList.toggle('hidden', mode !== 'build');
+            document.getElementById('play-controls').classList.toggle('hidden', mode !== 'play');
+            
+            const buildBtn = document.querySelector('.build-btn');
+            const playBtn = document.querySelector('.play-btn');
+
+            if (mode === 'build') {
+                buildBtn.classList.add('bg-indigo-500', 'text-white');
+                buildBtn.classList.remove('bg-gray-200', 'text-gray-800');
+                playBtn.classList.remove('bg-indigo-500', 'text-white');
+                playBtn.classList.add('bg-gray-200', 'text-gray-800');
+            } else {
+                playBtn.classList.add('bg-indigo-500', 'text-white');
+                playBtn.classList.remove('bg-gray-200', 'text-gray-800');
+                buildBtn.classList.remove('bg-indigo-500', 'text-white');
+                buildBtn.classList.add('bg-gray-200', 'text-gray-800');
+            }
+            
+            // Clear current state and canvas when switching modes
+            objects = [];
+            document.getElementById('object-container').innerHTML = '';
+            
+            // Clear canvas
+            const canvas = document.getElementById('silhouette-canvas');
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+            
+            document.getElementById('status-message').textContent = '';
+            document.getElementById('solved-count').textContent = '';
+            document.getElementById('level-container').style.backgroundColor = document.getElementById('bg-color').value;
+        }
+
+        // --- Build Mode Logic ---
+
+        window.handleImageUpload = function(event) {
+            const files = event.target.files;
+            if (!files.length) return;
+
+            for (const file of files) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const base64Image = e.target.result;
+                    createDraggableObject(base64Image);
+                };
+                reader.readAsDataURL(file);
+            }
+            // Reset file input to allow re-uploading the same file
+            event.target.value = ''; 
+        }
+
+        function createDraggableObject(base64Image) {
+            const container = document.getElementById('object-container');
+            const objectId = Date.now() + Math.random().toString(16).slice(2);
+
+            const img = new Image();
+            img.onload = () => {
+                // Calculate initial size based on BASE_DIM
+                const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
+                const pixelRatio = maxDim > 0 ? BASE_DIM / maxDim : 1;
+                
+                const initialWidth = img.naturalWidth * pixelRatio;
+                const initialHeight = img.naturalHeight * pixelRatio;
+
+                const obj = {
+                    id: objectId,
+                    base64Image: base64Image,
+                    initialX: (container.clientWidth / 2) - (initialWidth / 2),
+                    initialY: (container.clientHeight / 2) - (initialHeight / 2),
+                    initialScale: 1,
+                    initialRotation: 0,
+                    finalX: null,
+                    finalY: null,
+                    finalScale: 1,
+                    finalRotation: 0,
+                    currentX: (container.clientWidth / 2) - (initialWidth / 2),
+                    currentY: (container.clientHeight / 2) - (initialHeight / 2),
+                    currentScale: 1,
+                    currentRotation: 0,
+                    width: img.naturalWidth, // Natural image width
+                    height: img.naturalHeight, // Natural image height
+                    solved: false,
+                };
+                objects.push(obj);
+                renderObject(obj);
+            };
+            img.src = base64Image;
+        }
+        
+        function renderObject(obj) {
+            let element = document.getElementById(`obj-${obj.id}`);
+            const container = document.getElementById('object-container');
+            
+            if (!element) {
+                element = document.createElement('div');
+                element.id = `obj-${obj.id}`;
+                element.className = 'draggable-object group';
+                element.style.backgroundImage = `url(${obj.base64Image})`;
+                element.dataset.objectId = obj.id;
+                container.appendChild(element);
+
+                // Add controls for build mode (scale and rotate)
+                if (currentMode === 'build') {
+                    // Scale handle
+                    const scaleHandle = document.createElement('div');
+                    scaleHandle.className = 'w-4 h-4 bg-red-500 absolute -bottom-2 -right-2 rounded-full cursor-se-resize opacity-0 group-hover:opacity-100 transition-opacity';
+                    scaleHandle.dataset.action = 'scale';
+                    element.appendChild(scaleHandle);
+
+                    // Rotate handle
+                    const rotateHandle = document.createElement('div');
+                    rotateHandle.className = 'w-4 h-4 bg-blue-500 absolute -top-2 -right-2 rounded-full cursor-alias opacity-0 group-hover:opacity-100 transition-opacity';
+                    rotateHandle.dataset.action = 'rotate';
+                    element.appendChild(rotateHandle);
+
+                    // Deletion button
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.textContent = 'X';
+                    deleteBtn.className = 'w-4 h-4 bg-gray-700 text-white text-xs absolute -top-2 -left-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity';
+                    deleteBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteObject(obj.id);
+                    };
+                    element.appendChild(deleteBtn);
+                }
+            }
+
+            // --- Unified Size Calculation based on BASE_DIM ---
+            const maxDim = Math.max(obj.width, obj.height);
+            // Calculate the pixel ratio where maxDim maps to BASE_DIM (100px) when scale is 1
+            const pixelRatio = maxDim > 0 ? BASE_DIM / maxDim : 1; 
+
+            // Current display size in pixels
+            const currentWidth = obj.width * pixelRatio * obj.currentScale;
+            const currentHeight = obj.height * pixelRatio * obj.currentScale;
+
+            // Apply state to DOM element
+            element.style.width = `${currentWidth}px`;
+            element.style.height = `${currentHeight}px`;
+            element.style.transform = `translate(${obj.currentX}px, ${obj.currentY}px) rotate(${obj.currentRotation}deg)`;
+            element.classList.toggle('solved', obj.solved);
+            element.style.zIndex = obj.solved ? 10 : 5;
+        }
+
+        function deleteObject(objectId) {
+            objects = objects.filter(obj => obj.id !== objectId);
+            const element = document.getElementById(`obj-${objectId}`);
+            if (element) {
+                element.remove();
+            }
+        }
+        
+        window.lockFinalPositions = function() {
+            if (currentMode !== 'build') return;
+            if (objects.length === 0) {
+                 showMessage("No Objects", "Please add some objects first.");
+                return;
+            }
+            
+            objects.forEach(obj => {
+                obj.finalX = obj.currentX;
+                obj.finalY = obj.currentY;
+                obj.finalScale = obj.currentScale;
+                obj.finalRotation = obj.currentRotation;
+            });
+            showMessage("Final Positions Locked", "The current positions of all objects have been set as the solution.");
+        }
+        
+        window.updateBackground = function() {
+            const color = document.getElementById('bg-color').value;
+            document.getElementById('level-container').style.backgroundColor = color;
+            
+            const canvas = document.getElementById('silhouette-canvas');
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        window.generateSilhouettes = function() {
+            if (objects.length === 0) {
+                if(currentMode === 'build') showMessage("No Objects", "Please add and position objects before generating silhouettes.");
+                return;
+            }
+
+            const canvas = document.getElementById('silhouette-canvas');
+            const ctx = canvas.getContext('2d');
+            const container = document.getElementById('level-container');
+            
+            // Match canvas size to container and clear
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            objects.forEach(obj => {
+                if (obj.finalX === null) return; // Skip if final position is not set
+
+                // Load image to determine natural dimensions if they weren't passed (shouldn't happen in play mode)
+                const img = new Image();
+                img.onload = () => {
+                    ctx.save();
+                    
+                    // --- Consistent Dimension Calculation ---
+                    const maxDim = Math.max(obj.width, obj.height);
+                    const pixelRatio = maxDim > 0 ? BASE_DIM / maxDim : 1; 
+
+                    const width = obj.width * pixelRatio * obj.finalScale;
+                    const height = obj.height * pixelRatio * obj.finalScale;
+                    
+                    // Center of the final position
+                    const centerX = obj.finalX + width / 2;
+                    const centerY = obj.finalY + height / 2;
+
+                    // Translate to center, rotate, and translate back
+                    ctx.translate(centerX, centerY);
+                    ctx.rotate(obj.finalRotation * Math.PI / 180);
+                    ctx.translate(-centerX, -centerY);
+
+                    // Draw the silhouette (black fill)
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)'; // Light gray/black shadow, slightly darker for visibility
+                    
+                    // Simple rectangle placeholder for silhouette
+                    ctx.fillRect(obj.finalX, obj.finalY, width, height);
+                    
+                    ctx.restore();
+                };
+                img.src = obj.base64Image;
+            });
+
+            if (currentMode === 'build') {
+                showMessage("Silhouettes Generated", "Black silhouettes have been added to the background.");
+            }
+        }
+
+        // --- Play Mode Logic ---
+
+        window.shuffleAndStartPlay = function() {
+            if (!currentLevel) {
+                showMessage("No Level Selected", "Please select a level to play from the dropdown.");
+                return;
+            }
+
+            const container = document.getElementById('level-container');
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            
+            objects = [];
+            document.getElementById('object-container').innerHTML = ''; // Clear DOM
+
+            currentLevel.objects.forEach(data => {
+                const isSolved = false;
+                
+                // --- Consistent Dimension Calculation for Safe Zone ---
+                const maxDim = Math.max(data.width, data.height);
+                const pixelRatio = maxDim > 0 ? BASE_DIM / maxDim : 1; 
+
+                const finalWidth = data.width * pixelRatio * data.finalScale;
+                const finalHeight = data.height * pixelRatio * data.finalScale;
+                // --- END FIX ---
+                
+                // Calculate random starting position far from the final spot
+                let startX, startY;
+                
+                const safeZoneX = data.finalX - SNAP_DISTANCE;
+                const safeZoneY = data.finalY - SNAP_DISTANCE;
+                const safeZoneW = finalWidth + 2 * SNAP_DISTANCE;
+                const safeZoneH = finalHeight + 2 * SNAP_DISTANCE;
+                
+                // Simple random placement ensuring it starts outside the snap zone
+                do {
+                    startX = Math.random() * (containerWidth - finalWidth);
+                    startY = Math.random() * (containerHeight - finalHeight);
+                } while (
+                    startX > safeZoneX && startX < safeZoneX + safeZoneW &&
+                    startY > safeZoneY && startY < safeZoneY + safeZoneH
+                );
+
+                const obj = {
+                    ...data,
+                    currentX: startX,
+                    currentY: startY,
+                    currentScale: data.finalScale,
+                    currentRotation: data.finalRotation,
+                    solved: isSolved,
+                };
+                
+                objects.push(obj);
+                renderObject(obj);
+            });
+            
+            // --- FIX: Draw silhouettes now that objects are ready ---
+            generateSilhouettes();
+
+            updateSolvedCount();
+            document.getElementById('status-message').textContent = 'Game Started! Drag objects into place.';
+        }
+
+        function checkWinCondition() {
+            const allSolved = objects.every(obj => obj.solved);
+            if (allSolved) {
+                document.getElementById('status-message').textContent = 'LEVEL COMPLETE! 🎉';
+                showMessage("Congratulations!", `You successfully organized all objects in "${currentLevel.name}"!`);
+            }
+        }
+        
+        function updateSolvedCount() {
+            const solvedCount = objects.filter(obj => obj.solved).length;
+            document.getElementById('solved-count').textContent = `Solved: ${solvedCount} / ${objects.length}`;
+        }
+
+        function trySnap(obj, x, y) {
+            if (obj.solved) return;
+            
+            const dx = x - obj.finalX;
+            const dy = y - obj.finalY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance <= SNAP_DISTANCE) {
+                // Snap into final position
+                obj.currentX = obj.finalX;
+                obj.currentY = obj.finalY;
+                obj.solved = true;
+                renderObject(obj);
+                updateSolvedCount();
+                checkWinCondition();
+                return true;
+            }
+            return false;
+        }
+
+        // --- Interaction Handlers (Drag, Scale, Rotate) ---
+
+        let activeObject = null;
+        let startX, startY, startObjX, startObjY;
+        let startDist, startAngle, startScale, startRotation;
+        let action = 'move'; // 'move', 'scale', 'rotate'
+        
+        const container = document.getElementById('level-container');
+        
+        // Unified start event handler
+        container.addEventListener('mousedown', interactionStart);
+        container.addEventListener('touchstart', interactionStart);
+
+        function interactionStart(e) {
+            // Prevent default touch behavior (like scrolling)
+            e.preventDefault(); 
+            
+            // Determine the target element
+            const target = e.target.closest('.draggable-object');
+            if (!target) {
+                activeObject = null;
+                return;
+            }
+            
+            activeObject = objects.find(obj => obj.id === target.dataset.objectId);
+            if (!activeObject || activeObject.solved) {
+                activeObject = null;
+                return;
+            }
+
+            // Determine action based on the click location
+            const element = e.target;
+            if (element.dataset.action === 'scale' && currentMode === 'build') {
+                action = 'scale';
+            } else if (element.dataset.action === 'rotate' && currentMode === 'build') {
+                action = 'rotate';
+            } else {
+                action = 'move';
+            }
+
+            const isTouch = e.type.includes('touch');
+            const clientX = isTouch ? e.touches[0].clientX : e.clientX;
+            const clientY = isTouch ? e.touches[0].clientY : e.clientY;
+            
+            const containerRect = container.getBoundingClientRect();
+
+            startX = clientX;
+            startY = clientY;
+            startObjX = activeObject.currentX;
+            startObjY = activeObject.currentY;
+
+            if (action === 'scale' || action === 'rotate') {
+                // Calculate center relative to container
+                const objRect = target.getBoundingClientRect();
+                const objCenterX = objRect.left + objRect.width / 2;
+                const objCenterY = objRect.top + objRect.height / 2;
+                
+                // Distance and angle from center to interaction point
+                const dx = clientX - objCenterX;
+                const dy = clientY - objCenterY;
+                startDist = Math.sqrt(dx * dx + dy * dy);
+                startAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+                startScale = activeObject.currentScale;
+                startRotation = activeObject.currentRotation;
+            }
+
+            container.addEventListener(isTouch ? 'touchmove' : 'mousemove', interactionMove);
+            container.addEventListener(isTouch ? 'touchend' : 'mouseup', interactionEnd);
+
+            // Bring the active object to the front
+            target.style.zIndex = 20; 
+        }
+
+        // Unified move event handler
+        function interactionMove(e) {
+            if (!activeObject) return;
+            e.preventDefault();
+
+            const isTouch = e.type.includes('touch');
+            const clientX = isTouch ? e.touches[0].clientX : e.clientX;
+            const clientY = isTouch ? e.touches[0].clientY : e.clientY;
+            
+            const dx = clientX - startX;
+            const dy = clientY - startY;
+
+            if (action === 'move') {
+                activeObject.currentX = startObjX + dx;
+                activeObject.currentY = startObjY + dy;
+            } else if (action === 'scale') {
+                const objRect = document.getElementById(`obj-${activeObject.id}`).getBoundingClientRect();
+                const objCenterX = objRect.left + objRect.width / 2;
+                const objCenterY = objRect.top + objRect.height / 2;
+                
+                const currentDx = clientX - objCenterX;
+                const currentDy = clientY - objCenterY;
+                const currentDist = Math.sqrt(currentDx * currentDx + currentDy * currentDy);
+                
+                activeObject.currentScale = startScale * (currentDist / startDist);
+                // Limit scale range
+                activeObject.currentScale = Math.max(0.5, Math.min(3.0, activeObject.currentScale));
+
+            } else if (action === 'rotate') {
+                 const objRect = document.getElementById(`obj-${activeObject.id}`).getBoundingClientRect();
+                 const objCenterX = objRect.left + objRect.width / 2;
+                 const objCenterY = objRect.top + objRect.height / 2;
+
+                 const currentDx = clientX - objCenterX;
+                 const currentDy = clientY - objCenterY;
+                 const currentAngle = Math.atan2(currentDy, currentDx) * 180 / Math.PI;
+
+                 const deltaAngle = currentAngle - startAngle;
+                 activeObject.currentRotation = startRotation + deltaAngle;
+            }
+
+            renderObject(activeObject);
+        }
+
+        // Unified end event handler
+        function interactionEnd(e) {
+            if (!activeObject) return;
+            
+            const isTouch = e.type.includes('touchend');
+
+            container.removeEventListener(isTouch ? 'touchmove' : 'mousemove', interactionMove);
+            container.removeEventListener(isTouch ? 'touchend' : 'mouseup', interactionEnd);
+
+            // In Play mode, check for snap on release
+            if (currentMode === 'play' && action === 'move') {
+                trySnap(activeObject, activeObject.currentX, activeObject.currentY);
+            }
+            
+            // Reset z-index
+            document.getElementById(`obj-${activeObject.id}`).style.zIndex = activeObject.solved ? 10 : 5;
+            
+            activeObject = null;
+            action = 'move';
+        }
+
+        // --- Main execution ---
+        initFirebase();
+        setMode('build');
+
+        // Handle resize events to keep the canvas size correct
+        window.addEventListener('resize', () => {
+            const canvas = document.getElementById('silhouette-canvas');
+            const container = document.getElementById('level-container');
+            if (canvas && container) {
+                canvas.width = container.clientWidth;
+                canvas.height = container.clientHeight;
+                // Redraw silhouettes if a level is being played or built with them visible
+                if (objects.length > 0 && objects.every(o => o.finalX !== null)) {
+                    generateSilhouettes();
+                }
+            }
+        });
+
+    </script>
+</body>
+</html>
