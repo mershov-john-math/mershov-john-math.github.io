@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOOM: 10th Dimension</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: #0f0;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* Scanlines & Retro Filter */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* HUD */
+        #hud {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 120px;
+            background: #222;
+            border-top: 4px solid #444;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            z-index: 20;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.8);
+        }
+
+        .hud-panel {
+            background: #000;
+            border: 2px solid #555;
+            padding: 10px;
+            width: 15%;
+            height: 70%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .hud-label {
+            color: #888;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .hud-value {
+            font-family: 'Impact', sans-serif;
+            font-size: 36px;
+            color: #b33;
+            text-shadow: 2px 2px 0px #500;
+            letter-spacing: 2px;
+        }
+
+        #face-container {
+            width: 100px;
+            height: 80%;
+            background: #000;
+            border: 2px solid #555;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        #doom-face {
+            font-size: 60px;
+            filter: contrast(1.5) saturate(0);
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px;
+            height: 20px;
+            pointer-events: none;
+            z-index: 15;
+            color: #0f0;
+            font-size: 24px;
+            text-align: center;
+            line-height: 20px;
+            text-shadow: 0 0 5px #0f0;
+        }
+
+        #weapon {
+            position: absolute;
+            bottom: 120px; /* Above HUD */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            height: 300px;
+            background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="40" y="20" width="20" height="80" fill="%23333" /><rect x="35" y="60" width="30" height="40" fill="%23111" /><circle cx="50" cy="20" r="8" fill="%23f00" opacity="0.8" /></svg>') no-repeat center bottom;
+            background-size: contain;
+            z-index: 12;
+            transition: transform 0.1s;
+        }
+
+        .muzzle-flash {
+            position: absolute;
+            bottom: 350px;
+            left: 50%;
+            transform: translateX(-50%) scale(0);
+            width: 100px;
+            height: 100px;
+            background: radial-gradient(circle, rgba(255,255,0,1) 0%, rgba(255,0,0,0.5) 50%, rgba(0,0,0,0) 70%);
+            z-index: 13;
+            pointer-events: none;
+            transition: transform 0.05s;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #0f0;
+            font-size: 24px;
+            z-index: 100;
+        }
+
+        /* Dimension Monitor */
+        #dim-monitor {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            border: 1px solid #333;
+            color: #0f0;
+            padding: 10px;
+            font-size: 10px;
+            z-index: 20;
+            width: 200px;
+        }
+    </style>
+    <!-- Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="loading">GENERATING 10D GEOMETRY...</div>
+    <div id="canvas-container"></div>
+    <div id="overlay"></div>
+    
+    <div id="crosshair">+</div>
+    
+    <div class="muzzle-flash" id="flash"></div>
+    <div id="weapon"></div>
+
+    <div id="dim-monitor">
+        <div>10D STABILITY MONITOR</div>
+        <div id="dim-values"></div>
+    </div>
+
+    <div id="hud">
+        <div class="hud-panel">
+            <div class="hud-label">ARMOR</div>
+            <div class="hud-value" style="color: #66b;">100%</div>
+        </div>
+        <div class="hud-panel">
+            <div class="hud-label">HEALTH</div>
+            <div class="hud-value" id="health-val">100%</div>
+        </div>
+        
+        <div id="face-container">
+            <div id="doom-face">😐</div>
+        </div>
+
+        <div class="hud-panel">
+            <div class="hud-label">AMMO</div>
+            <div class="hud-value" id="ammo-val">∞</div>
+        </div>
+        <div class="hud-panel">
+            <div class="hud-label">DIMENSION</div>
+            <div class="hud-value" style="color: #0f0; font-size: 24px;">XYZ...</div>
+        </div>
+    </div>
+
+<script>
+    /**
+     * HYPER-DOOM 10D ENGINE
+     * * Rendering 10 spatial dimensions on a 2D screen involves projecting 
+     * 10D -> 3D -> 2D.
+     * * We simulate "flow" by constantly rotating the 10D world in random higher-dimensional 
+     * planes (e.g., rotating the W-axis against the V-axis).
+     */
+
+    // --- Configuration ---
+    const CONFIG = {
+        pointCount: 1500, // Number of vertices in our hyper-structure
+        dimensionCount: 10, // Yes, 10 spatial dimensions
+        rotationSpeed: 0.005, // Speed of natural flow
+        enemyCount: 5,
+        movementSpeed: 0.15
+    };
+
+    // --- Global State ---
+    let camera, scene, renderer;
+    let hyperPoints = []; // Stores { raw: [x0..x9], mesh: THREE.Mesh }
+    let hyperLines = []; // Stores connections
+    let enemies = [];
+    let bullets = [];
+    let playerHealth = 100;
+    let lastTime = 0;
+    
+    // Rotation angles for 10D (45 possible planes, we'll pick a few active ones)
+    // A rotation plane is defined by two indices [i, j].
+    let activeRotations = [];
+
+    // Keys
+    const keys = { w: false, a: false, s: false, d: false, ArrowLeft: false, ArrowRight: false };
+
+    // Init
+    function init() {
+        document.getElementById('loading').style.display = 'none';
+
+        // 1. Three.js Setup
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.03); // Deep darkness
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        renderer = new THREE.WebGLRenderer({ antialias: false }); // False for retro grit
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio * 0.5); // Low res rendering
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // 2. Generate 10D Geometry
+        generateHyperLevel();
+
+        // 3. Setup Enemies
+        spawnEnemies();
+
+        // 4. Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040); 
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xff0000, 0.5);
+        dirLight.position.set(0, 10, 0);
+        scene.add(dirLight);
+
+        // 5. Setup Rotations (The "Flow")
+        // We pick random pairs of dimensions > 2 to rotate against each other
+        for(let i=0; i<6; i++) {
+            let d1 = Math.floor(Math.random() * CONFIG.dimensionCount);
+            let d2 = Math.floor(Math.random() * CONFIG.dimensionCount);
+            if(d1 !== d2) {
+                activeRotations.push({ 
+                    d1, d2, 
+                    speed: (Math.random() - 0.5) * CONFIG.rotationSpeed, 
+                    angle: 0 
+                });
+            }
+        }
+
+        // 6. Events
+        window.addEventListener('resize', onWindowResize, false);
+        document.addEventListener('keydown', (e) => onKey(e, true));
+        document.addEventListener('keyup', (e) => onKey(e, false));
+        document.addEventListener('mousedown', shoot);
+        
+        // Mouse look lock
+        document.body.addEventListener('click', () => {
+            document.body.requestPointerLock();
+        });
+        document.addEventListener('mousemove', onMouseMove);
+
+        // Start Loop
+        animate(0);
+    }
+
+    // --- 10D Mathematics ---
+
+    // Generate a point in 10D space
+    function random10DPoint(scale = 10) {
+        let p = [];
+        for(let i=0; i<CONFIG.dimensionCount; i++) {
+            p.push((Math.random() - 0.5) * scale);
+        }
+        return p;
+    }
+
+    // Project 10D point to 3D point
+    // We use a simple orthographic discard or perspective divide for higher dims
+    // To make it look "cool", we treat standard x,y,z as 0,1,2.
+    // Dimensions 3..9 modify the position or color.
+    function project10to3(point10, rotations) {
+        // 1. Apply Rotations
+        // Copy point to avoid mutation of source
+        let p = [...point10];
+
+        // Apply all active hyper-rotations
+        rotations.forEach(rot => {
+            let x = p[rot.d1];
+            let y = p[rot.d2];
+            p[rot.d1] = x * Math.cos(rot.angle) - y * Math.sin(rot.angle);
+            p[rot.d2] = x * Math.sin(rot.angle) + y * Math.cos(rot.angle);
+        });
+
+        // 2. Project down to 3D
+        // A simple perspective projection for higher dimensions:
+        // x_projected = x / (w + offset)
+        // We iterate from dim 9 down to 3
+        let x = p[0], y = p[1], z = p[2];
+        let w_factor = 1;
+        
+        // Use dimensions 3-9 to scale the 3D coordinates (Perspective projection)
+        for(let i=3; i<CONFIG.dimensionCount; i++) {
+            let w = p[i];
+            // Avoid division by zero, shift camera back in hyper-space
+            let dist = 4 + w; 
+            if(dist < 0.1) dist = 0.1; // Clipping
+            w_factor *= (1 / dist) * 2.5; // Scale factor
+        }
+
+        // The "Flow" visual effect:
+        // Higher dimensions influence the final 3D position non-linearly
+        return new THREE.Vector3(x * w_factor, y * w_factor, z * w_factor);
+    }
+
+    // --- Game Logic ---
+
+    function generateHyperLevel() {
+        // Create a hyper-lattice
+        const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+
+        // We create a cloud of points that form a tesseract-like structure
+        // Instead of random, let's make a grid in 4D and 0 for others to start
+        const size = 2; 
+        const step = 2; 
+        // A sparse hypergrid is hard, let's do random points on a hypersphere surface
+        // it looks more "organic" and "flowing"
+        
+        for(let i=0; i<CONFIG.pointCount; i++) {
+            let raw = random10DPoint(20);
+            
+            // Visual representation in 3D
+            // Using lines looks better for "matrix" feel, points for particles
+            // Let's use small cubes (voxels)
+            let mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+            
+            hyperPoints.push({ raw, mesh });
+        }
+        
+        // Add floor reference (standard 3D plane)
+        const gridHelper = new THREE.GridHelper(50, 50, 0x333333, 0x111111);
+        scene.add(gridHelper);
+    }
+
+    function spawnEnemies() {
+        const geom = new THREE.IcosahedronGeometry(0.5, 1);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+        
+        for(let i=0; i<CONFIG.enemyCount; i++) {
+            let raw = random10DPoint(15);
+            let mesh = new THREE.Mesh(geom, mat);
+            scene.add(mesh);
+            enemies.push({ 
+                raw: raw, 
+                mesh: mesh, 
+                active: true,
+                offset: Math.random() * 100 // Time offset for animation
+            });
+        }
+    }
+
+    function onKey(e, state) {
+        if(keys.hasOwnProperty(e.key) || keys.hasOwnProperty(e.code)) {
+            keys[e.key] = state;
+        }
+        // Map WASD
+        if(e.key === 'w' || e.key === 'W') keys.w = state;
+        if(e.key === 'a' || e.key === 'A') keys.a = state;
+        if(e.key === 's' || e.key === 'S') keys.s = state;
+        if(e.key === 'd' || e.key === 'D') keys.d = state;
+    }
+
+    function onMouseMove(e) {
+        if (document.pointerLockElement === document.body) {
+            camera.rotation.y -= e.movementX * 0.002;
+            camera.rotation.x += e.movementY * 0.002;
+            // Clamp pitch
+            camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+        }
+    }
+
+    function shoot() {
+        if(playerHealth <= 0) return;
+
+        // Visuals
+        const gun = document.getElementById('weapon');
+        const flash = document.getElementById('flash');
+        
+        gun.style.transform = "translateX(-50%) translateY(20px)";
+        flash.style.transform = "translateX(-50%) scale(1)";
+        flash.style.opacity = 1;
+
+        setTimeout(() => {
+            gun.style.transform = "translateX(-50%) translateY(0)";
+            flash.style.transform = "translateX(-50%) scale(0)";
+        }, 100);
+
+        // Raycasting Logic
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+        // Check intersections with enemies
+        // Note: We are raycasting against the *projected 3D mesh*
+        // This means you are shooting the "shadow" of the 10D monster
+        const hitTestObjects = enemies.map(e => e.mesh);
+        const intersects = raycaster.intersectObjects(hitTestObjects);
+
+        if(intersects.length > 0) {
+            const hitMesh = intersects[0].object;
+            const enemy = enemies.find(e => e.mesh === hitMesh);
+            
+            if(enemy) {
+                // "Damage" the enemy by knocking it into a far dimension
+                enemy.raw[4] += 50; 
+                // Color flash
+                hitMesh.material.color.setHex(0xffffff);
+                setTimeout(() => {
+                    hitMesh.material.color.setHex(0xff0000);
+                }, 100);
+                
+                // Respawn closer eventually or kill
+                if(enemy.raw[4] > 100) {
+                    // Respawn logic
+                    for(let k=0; k<10; k++) enemy.raw[k] = (Math.random()-0.5)*15;
+                }
+            }
+        }
+        
+        // Also create a "Bullet" that travels
+        // A bullet is just a yellow line for visual feedback
+        // (Skipped for brevity/performance, muzzle flash is enough)
+    }
+
+    function updatePhysics(dt) {
+        // Player Move
+        const speed = CONFIG.movementSpeed;
+        const direction = new THREE.Vector3();
+        camera.getWorldDirection(direction);
+        const side = new THREE.Vector3();
+        side.crossVectors(camera.up, direction).normalize();
+
+        if(keys.w) camera.position.addScaledVector(direction, speed);
+        if(keys.s) camera.position.addScaledVector(direction, -speed);
+        if(keys.a) camera.position.addScaledVector(side, speed); // Inverted X in 3js sometimes? check visual
+        if(keys.d) camera.position.addScaledVector(side, -speed);
+
+        // Simple floor collision
+        if(camera.position.y < 1) camera.position.y = 1;
+        if(camera.position.y > 10) camera.position.y = 10;
+    }
+
+    function updateHyperSpace(time) {
+        // Update Rotation Angles (The "Flow")
+        activeRotations.forEach(rot => {
+            rot.angle += rot.speed;
+        });
+
+        // 1. Update Environment geometry
+        // We recalculate the 3D position of every vertex in the world based on 10D rotations
+        let p3;
+        hyperPoints.forEach(pt => {
+            p3 = project10to3(pt.raw, activeRotations);
+            pt.mesh.position.set(p3.x, p3.y, p3.z);
+            
+            // Scale mesh based on "proximity" in higher dimensions (simulated by w factor)
+            // If it compressed to 0, it's far away
+            let dist = pt.mesh.position.length();
+            let scale = Math.max(0.01, Math.min(0.5, 5 / dist));
+            pt.mesh.scale.set(scale, scale, scale);
+            
+            // Color shift based on 4th dimension (time/w)
+            let hue = (time * 0.0005 + pt.raw[3] * 0.1) % 1;
+            pt.mesh.material.color.setHSL(hue, 1.0, 0.5);
+        });
+
+        // 2. Update Enemies
+        // Enemies drift towards player in 3D but also fluctuate in 10D
+        enemies.forEach(en => {
+            // AI: Move towards player in X,Z,Y
+            // But drift randomly in W, V, etc.
+            
+            // 3D seek
+            let dx = camera.position.x - en.raw[0]; // Approximation (raw is 10d, cam is 3d)
+            // We need to store current 3D projection to seek properly, 
+            // but seeking in Raw coordinates is "True" navigation.
+            // Let's assume Camera is at (x,y,z, 0,0,0,0...) in 10D space.
+            
+            if(Math.abs(dx) > 1) en.raw[0] += dx * 0.01;
+            let dz = camera.position.z - en.raw[2];
+            if(Math.abs(dz) > 1) en.raw[2] += dz * 0.01;
+
+            // 10D Morph (Breathing effect)
+            en.raw[3] = Math.sin(time * 0.002 + en.offset) * 5; 
+            en.raw[4] = Math.cos(time * 0.003 + en.offset) * 5;
+
+            // Project
+            p3 = project10to3(en.raw, activeRotations);
+            en.mesh.position.set(p3.x, p3.y, p3.z);
+            
+            // Rotation of the mesh itself
+            en.mesh.rotation.x += 0.05;
+            en.mesh.rotation.y += 0.05;
+
+            // Collision with player (Damage)
+            if(p3.distanceTo(camera.position) < 2) {
+                takeDamage(1);
+            }
+        });
+
+        // Update UI Text
+        let dimStr = activeRotations.map(r => `D${r.d1}-D${r.d2}`).join(" ");
+        document.getElementById('dim-values').innerText = dimStr + "\nFLOW: STABLE";
+    }
+
+    function takeDamage(amount) {
+        playerHealth -= amount;
+        if(playerHealth < 0) playerHealth = 0;
+        document.getElementById('health-val').innerText = Math.floor(playerHealth) + "%";
+        
+        // Red Flash
+        document.getElementById('overlay').style.backgroundColor = "rgba(255, 0, 0, 0.3)";
+        setTimeout(() => {
+            document.getElementById('overlay').style.backgroundColor = "transparent";
+        }, 100);
+
+        // Face Logic
+        const face = document.getElementById('doom-face');
+        if(playerHealth > 80) face.innerText = "😐";
+        else if(playerHealth > 50) face.innerText = "😬";
+        else if(playerHealth > 20) face.innerText = "😫";
+        else face.innerText = "☠️";
+
+        if(playerHealth <= 0) {
+            // Game Over state (simplified)
+            document.getElementById('crosshair').innerText = "GAME OVER";
+        }
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate(time) {
+        requestAnimationFrame(animate);
+
+        let dt = time - lastTime;
+        lastTime = time;
+
+        if(playerHealth > 0) {
+            updatePhysics(dt);
+            updateHyperSpace(time);
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    // Start
+    init();
+
+</script>
+</body>
+</html>
