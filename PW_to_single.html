@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Piecewise to Single Expression (Correct abs)</title>
+<style>
+  body { font-family: system-ui, sans-serif; display: flex; gap: 20px; padding: 20px; }
+  canvas { border: 1px solid #333; cursor: crosshair; }
+  pre { background: #f4f4f4; padding: 10px; max-width: 420px; overflow-x: auto; }
+  button { margin: 5px 0; }
+</style>
+</head>
+<body>
+
+<div>
+  <canvas id="grid" width="400" height="400"></canvas>
+  <p>Click lattice points left → right</p>
+  <button onclick="clearAll()">Clear</button>
+</div>
+
+<div>
+  <h3>Piecewise Form</h3>
+  <pre id="piecewise"></pre>
+
+  <h3>Single Expression (abs only)</h3>
+  <pre id="single"></pre>
+
+  <button onclick="toLatex()">Show LaTeX</button>
+  <pre id="latex"></pre>
+</div>
+
+<script>
+const canvas = document.getElementById("grid");
+const ctx = canvas.getContext("2d");
+const size = 20;
+const points = [];
+
+function drawGrid() {
+  ctx.clearRect(0,0,400,400);
+  ctx.strokeStyle = "#ddd";
+  for (let i = 0; i <= 400; i += size) {
+    ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,400); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(400,i); ctx.stroke();
+  }
+  ctx.strokeStyle = "#000";
+  ctx.beginPath(); ctx.moveTo(0,200); ctx.lineTo(400,200); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(200,0); ctx.lineTo(200,400); ctx.stroke();
+}
+
+function toMath(x,y){ return [(x-200)/size, (200-y)/size]; }
+function fromMath(x,y){ return [200+x*size, 200-y*size]; }
+
+canvas.addEventListener("click", e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.round((e.clientX - rect.left) / size) * size;
+  const y = Math.round((e.clientY - rect.top) / size) * size;
+  const [mx] = toMath(x,y);
+  if (points.length && mx <= points[points.length-1][0]) { alert("x must increase"); return; }
+  points.push(toMath(x,y));
+  redraw(); updateFormulas();
+});
+
+function redraw() {
+  drawGrid();
+  ctx.strokeStyle = "blue"; ctx.lineWidth = 2; ctx.beginPath();
+  points.forEach((p,i)=>{ const [x,y] = fromMath(...p); i? ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.stroke();
+  ctx.fillStyle = "red";
+  points.forEach(p=>{ const [x,y] = fromMath(...p); ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill(); });
+}
+
+function updateFormulas() {
+  let pw = "";
+  let single = "";
+  for (let i=0;i<points.length-1;i++){
+    const [x1,y1] = points[i];
+    const [x2,y2] = points[i+1];
+    const m = (y2-y1)/(x2-x1);
+    const b = y1 - m*x1;
+    pw += `y = ${m.toFixed(2)}*x + ${b.toFixed(2)}   for ${x1} ≤ x ≤ ${x2}\n`;
+
+    // Correct abs() indicator
+    const numerator = `(abs(x-${x1}) - abs(x-${x2}) + ${(x2-x1).toFixed(2)})`;
+    const denominator = `(2*${(x2-x1).toFixed(2)})`;
+    const fraction = `${numerator} / ${denominator}`;
+    single += `${y1.toFixed(2)} + ${(y2-y1).toFixed(2)} * ${fraction}`;
+    if (i<points.length-2) single += " +";
+  }
+  document.getElementById("piecewise").textContent = pw || "(need ≥ 2 points)";
+  document.getElementById("single").textContent = single || "(need ≥ 2 points)";
+}
+
+function toLatex() {
+  let expr = document.getElementById("single").textContent;
+  if (!expr || expr.includes("need ≥ 2 points")) { document.getElementById("latex").textContent="(need ≥ 2 points)"; return; }
+  let latexExpr = expr.replace(/abs\((.*?)\)/g,"\\\\left|$1\\\\right|");
+  latexExpr = latexExpr.replace(/\*/g,' ');
+  latexExpr = "f(x) = " + latexExpr;
+  document.getElementById("latex").textContent = latexExpr;
+}
+
+function clearAll(){ points.length=0; redraw(); updateFormulas(); }
+
+drawGrid();
+</script>
+
+</body>
+</html>
