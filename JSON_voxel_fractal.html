@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Voxel Fractal Explorer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        #hud {
+            padding: 20px;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+            pointer-events: none;
+        }
+
+        h1 { margin: 0; font-size: 24px; color: #00ffcc; }
+        p { margin: 5px 0; font-size: 14px; opacity: 0.8; }
+        
+        .key {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        /* Controls Area */
+        #controls-area {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
+            pointer-events: auto;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .action-btn {
+            background: rgba(0, 255, 204, 0.2);
+            border: 1px solid #00ffcc;
+            color: #00ffcc;
+            padding: 5px 15px;
+            font-size: 14px;
+            font-family: monospace;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+            text-shadow: 1px 1px 1px black;
+            min-width: 40px;
+        }
+
+        .action-btn:hover {
+            background: rgba(0, 255, 204, 0.4);
+            transform: scale(1.05);
+        }
+
+        .action-btn:active {
+            transform: scale(0.95);
+        }
+
+        .status-text {
+            color: #00ffcc;
+            font-family: monospace;
+            font-size: 16px;
+            min-width: 150px;
+            text-align: center;
+        }
+
+        /* Editor Panel */
+        #editor-panel {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 400px;
+            background: rgba(0, 0, 0, 0.85);
+            border-left: 1px solid #333;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        #editor-panel.open {
+            transform: translateX(0);
+        }
+
+        #editor-header {
+            padding: 15px;
+            background: #222;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: white;
+        }
+
+        #json-input {
+            flex: 1;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: none;
+            padding: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            resize: none;
+            outline: none;
+            white-space: pre;
+            overflow-y: scroll;
+        }
+
+        #editor-footer {
+            padding: 15px;
+            background: #222;
+            border-top: 1px solid #444;
+            display: flex;
+            gap: 10px;
+        }
+
+        button.primary-btn {
+            background: #0088ff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+        button.primary-btn:hover { background: #0066cc; }
+        button.secondary { background: #444; color:white; border:none; padding:8px 16px; border-radius:4px; cursor:pointer;}
+        button.secondary:hover { background: #555; }
+
+        #toggle-editor {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            pointer-events: auto;
+            z-index: 5;
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+
+        /* Error Message */
+        #error-msg {
+            color: #ff5555;
+            font-size: 12px;
+            margin-top: 5px;
+            display: none;
+        }
+    </style>
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="crosshair"></div>
+
+    <div id="ui-layer">
+        <div id="hud">
+            <h1>Fractal Voxel Explorer</h1>
+            <p>Click screen to Start/Resume</p>
+            <p><span class="key">WASD</span> Move <span class="key">Space</span> Up <span class="key">Shift</span> Down</p>
+            <p><span class="key">E</span> Shrink <span class="key">Q</span> Grow | <span class="key">,</span> Slower <span class="key">.</span> Faster</p>
+            <p><span class="key">Esc</span> Open Menu / Mouse</p>
+        </div>
+        
+        <div id="controls-area">
+            <div class="control-group">
+                <button class="action-btn" onclick="adjustScale(-1)">- Grow (Q)</button>
+                <div id="scale-indicator" class="status-text">Level: 0</div>
+                <button class="action-btn" onclick="adjustScale(1)">+ Shrink (E)</button>
+            </div>
+            <div class="control-group">
+                <button class="action-btn" onclick="adjustSpeed(-1)">- Speed (,)</button>
+                <div id="speed-indicator" class="status-text">Speed: 1.0x</div>
+                <button class="action-btn" onclick="adjustSpeed(1)">+ Speed (.)</button>
+            </div>
+        </div>
+    </div>
+
+    <button id="toggle-editor" onclick="toggleEditor()">Edit Rules (JSON)</button>
+
+    <div id="editor-panel">
+        <div id="editor-header">
+            <span>Fractal Rules (JSON)</span>
+            <button class="secondary" onclick="toggleEditor()">Close</button>
+        </div>
+        <textarea id="json-input" spellcheck="false"></textarea>
+        <div id="editor-footer">
+            <button class="primary-btn" onclick="applyRules()">Apply & Reset World</button>
+            <button class="secondary" onclick="resetToDefault()">Reset Default</button>
+        </div>
+        <div style="padding: 0 15px 15px; color:#ff5555; display:none;" id="json-error">Invalid JSON</div>
+    </div>
+
+<script>
+    /**
+     * DEFAULT FRACTAL RULES
+     * Fixed to prevent infinite recursion on "solid" blocks.
+     */
+    const defaultRules = {
+        "blocks": {
+            "menger_sponge": {
+                "structure": [
+                    [
+                        "1111",
+                        "1001",
+                        "1001",
+                        "1111"
+                    ],
+                    [
+                        "1001",
+                        "0000",
+                        "0000",
+                        "1001"
+                    ],
+                    [
+                        "1001",
+                        "0000",
+                        "0000",
+                        "1001"
+                    ],
+                    [
+                        "1111",
+                        "1001",
+                        "1001",
+                        "1111"
+                    ]
+                ],
+                "legend": {
+                    "1": "sponge",
+                    "0": "nothing"
+                }
+            },
+            "sponge": {
+                // A classic 3x3 Menger iteration for the inner parts
+                "structure": [
+                    ["AAA", "A A", "AAA"],
+                    ["A A", "   ", "A A"],
+                    ["AAA", "A A", "AAA"]
+                ],
+                "legend": {
+                    "A": "sponge", // Recursive
+                    " ": "nothing"
+                }
+            },
+            "solid": {
+                "structure": [["S"]],
+                "legend": { "S": "solid" }
+            }
+        },
+        "colors": {
+            "sponge": "#aaaaaa",
+            "solid": "#4488ff",
+            "nothing": "transparent"
+        },
+        "world": "menger_sponge"
+    };
+
+    // --- GAME ENGINE ---
+
+    let scene, camera, renderer;
+    let clock, delta;
+    let worldRoot; // The Three.js Group holding the world
+    let fractalManager; // Class handling the logic
+    let player = {
+        position: new THREE.Vector3(0, 0, 15),
+        rotation: new THREE.Euler(0, 0, 0, 'YXZ'),
+        velocity: new THREE.Vector3(),
+        scaleExp: 0 // The integer level of scale
+    };
+    
+    // 3.0 matches typical fractal steps (like 1/3 size) better than 1.1
+    const BASE_SCALE_FACTOR = 3.0; 
+    const MAX_FRACTAL_DEPTH = 18; // Hard limit to prevent stack overflow
+    const VISIBILITY_OFFSET = 2; // How many layers deeper than current level are visible
+
+    let keys = {};
+    let isLocked = false;
+    let isEditorOpen = false;
+    let speedMultiplier = 1.0;
+
+    // --- CONFIG ---
+    // If a block's visual size on screen > SPLIT_THRESHOLD, we subdivide.
+    // If it < MERGE_THRESHOLD, we merge back.
+    const SPLIT_THRESHOLD = 0.5; 
+    const MERGE_THRESHOLD = 0.2; 
+
+    function init() {
+        // Setup Three.js
+        const container = document.getElementById('canvas-container');
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050505);
+        scene.fog = new THREE.Fog(0x050505, 10, 500);
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 20000000);
+        // Increased Far Plane to handle large scales
+        
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        // Input Listeners
+        document.addEventListener('keydown', (e) => {
+            if (isEditorOpen) return;
+            
+            keys[e.code] = true;
+
+            // Handle Discrete Zoom Inputs
+            if (e.code === 'KeyE') adjustScale(1); // Shrink (Zoom In)
+            if (e.code === 'KeyQ') adjustScale(-1); // Grow (Zoom Out)
+            
+            // Speed Controls
+            if (e.code === 'Comma') adjustSpeed(-1);
+            if (e.code === 'Period') adjustSpeed(1);
+        });
+        
+        document.addEventListener('keyup', (e) => keys[e.code] = false);
+        
+        // Mouse Lock Logic
+        document.addEventListener('click', (e) => {
+            if (isEditorOpen) return;
+            
+            // Check if clicking on UI buttons or Editor
+            if (e.target.tagName === 'BUTTON' || e.target.closest('#editor-panel')) return;
+
+            // Lock if clicking anywhere else (likely canvas or empty UI space)
+            container.requestPointerLock();
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            isLocked = document.pointerLockElement === container;
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isLocked) {
+                player.rotation.y -= e.movementX * 0.002;
+                player.rotation.x -= e.movementY * 0.002;
+                player.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, player.rotation.x));
+            }
+        });
+
+        window.addEventListener('resize', onWindowResize, false);
+
+        // Setup Editor
+        document.getElementById('json-input').value = JSON.stringify(defaultRules, null, 4);
+
+        // Start Game
+        clock = new THREE.Clock();
+        loadFractal(defaultRules);
+        animate();
+    }
+
+    // --- FRACTAL LOGIC ---
+
+    class FractalNode {
+        constructor(type, x, y, z, size, parent, depth = 0) {
+            this.type = type;
+            this.x = x; 
+            this.y = y;
+            this.z = z;
+            this.size = size;
+            this.parent = parent;
+            this.children = [];
+            this.mesh = null;
+            this.isSplit = false;
+            this.depth = depth;
+        }
+
+        canSplit() {
+            // Safety limit to prevent stack overflow and crashes
+            if (this.depth >= MAX_FRACTAL_DEPTH) return false;
+
+            if (!fractalManager.rules.blocks[this.type]) return false;
+            if (fractalManager.rules.colors[this.type] === "transparent") return false;
+            return true;
+        }
+
+        createMesh(posOffset) {
+            if (this.mesh) return;
+
+            const colorName = fractalManager.rules.colors[this.type];
+            if (!colorName || colorName === "nothing" || colorName === "transparent") return;
+
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshLambertMaterial({ color: colorName });
+            this.mesh = new THREE.Mesh(geometry, material);
+            
+            this.mesh.position.set(this.x, this.y, this.z);
+            this.mesh.scale.set(this.size, this.size, this.size);
+
+            // --- ADD BLACK BORDERS ---
+            const edges = new THREE.EdgesGeometry(geometry);
+            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+            // Add as child to the mesh so it inherits transform (pos/scale)
+            this.mesh.add(line);
+            // -------------------------
+            
+            if (this.parent && this.parent.group) {
+                this.parent.group.add(this.mesh);
+            } else {
+                worldRoot.add(this.mesh);
+            }
+        }
+
+        removeMesh() {
+            if (this.mesh) {
+                if (this.parent && this.parent.group) {
+                    this.parent.group.remove(this.mesh);
+                } else {
+                    worldRoot.remove(this.mesh);
+                }
+                
+                this.mesh.geometry.dispose();
+                this.mesh.material.dispose();
+                
+                // Cleanup children (Edges)
+                if (this.mesh.children.length > 0) {
+                    this.mesh.children.forEach(c => {
+                        if (c.geometry) c.geometry.dispose();
+                        if (c.material) c.material.dispose();
+                    });
+                }
+
+                this.mesh = null;
+            }
+        }
+
+        subdivide() {
+            if (this.isSplit) return;
+
+            const rule = fractalManager.rules.blocks[this.type];
+            if (!rule) return; 
+
+            this.removeMesh();
+
+            this.group = new THREE.Group();
+            this.group.position.set(this.x, this.y, this.z);
+            
+            if (this.parent && this.parent.group) {
+                this.parent.group.add(this.group);
+            } else {
+                worldRoot.add(this.group);
+            }
+
+            const struct = rule.structure; 
+            const layers = struct.length;
+            const rows = struct[0].length;
+            const cols = struct[0][0].length; 
+            
+            const stepY = this.size / layers;
+            const stepZ = this.size / rows;
+            const stepX = this.size / cols;
+            
+            for(let ly=0; ly<layers; ly++) {
+                for(let lz=0; lz<rows; lz++) {
+                    for(let lx=0; lx<cols; lx++) {
+                        
+                        const char = struct[ly][lz][lx];
+                        const childType = rule.legend[char] || "nothing";
+                        const color = fractalManager.rules.colors[childType];
+
+                        if (childType !== "nothing" && color !== "transparent") {
+                            const cx = (lx - (cols-1)/2) * stepX;
+                            const cy = (ly - (layers-1)/2) * stepY; 
+                            const cz = (lz - (rows-1)/2) * stepZ;
+
+                            const childSize = stepX; 
+
+                            // Pass depth+1 to children
+                            const child = new FractalNode(childType, cx, cy, cz, childSize, this, this.depth + 1);
+                            this.children.push(child);
+                            child.createMesh();
+                        }
+                    }
+                }
+            }
+
+            this.isSplit = true;
+        }
+
+        simplify() {
+            if (!this.isSplit) return;
+
+            for (let c of this.children) {
+                c.simplify(); 
+                c.removeMesh();
+            }
+            this.children = [];
+
+            if (this.parent && this.parent.group) {
+                this.parent.group.remove(this.group);
+            } else {
+                worldRoot.remove(this.group);
+            }
+            this.group = null;
+
+            this.isSplit = false;
+            this.createMesh();
+        }
+
+        updateLOD(worldScale, parentWorldPos) {
+            const currentWorldPos = new THREE.Vector3(this.x, this.y, this.z).multiplyScalar(worldScale);
+            if (parentWorldPos) currentWorldPos.add(parentWorldPos);
+
+            const dist = currentWorldPos.distanceTo(player.position);
+            // Visual size ~ size on screen
+            const visualSize = (this.size * worldScale) / (dist + 0.001);
+
+            // Determine max depth for the current user Level
+            // At level 0, max depth visible is 0 + VISIBILITY_OFFSET
+            const maxAllowedDepth = Math.max(1, Math.floor(player.scaleExp) + VISIBILITY_OFFSET);
+
+            if (this.isSplit) {
+                // Simplify if:
+                // 1. Visual size is too small (optimized) OR
+                // 2. We are deeper than allowed for the current Game Level (hides deep details when zoomed out)
+                if (visualSize < MERGE_THRESHOLD || this.depth >= maxAllowedDepth) {
+                    this.simplify();
+                } else {
+                    for (let c of this.children) {
+                        c.updateLOD(worldScale, currentWorldPos);
+                    }
+                }
+            } else {
+                // Split if:
+                // 1. Visual size is big enough
+                // 2. We haven't hit the limit for the current Game Level
+                // 3. The node is capable of splitting (has rules)
+                if (visualSize > SPLIT_THRESHOLD && this.depth < maxAllowedDepth && this.canSplit()) {
+                    this.subdivide();
+                    // Delay child updates to next frame prevents sync stack overflow
+                }
+            }
+        }
+    }
+
+    class FractalManager {
+        constructor(rules) {
+            this.rules = rules;
+            this.root = null;
+        }
+
+        buildWorld() {
+            if (worldRoot) scene.remove(worldRoot);
+            worldRoot = new THREE.Group();
+            scene.add(worldRoot);
+
+            const startType = this.rules.world;
+            this.root = new FractalNode(startType, 0, 0, 0, 10, null, 0);
+            this.root.createMesh();
+        }
+
+        update() {
+            if (!this.root) return;
+            const s = Math.pow(BASE_SCALE_FACTOR, player.scaleExp);
+            worldRoot.scale.set(s, s, s);
+            this.root.updateLOD(s, new THREE.Vector3(0,0,0));
+        }
+    }
+
+    // --- FUNCTIONS ---
+
+    function loadFractal(rules) {
+        try {
+            fractalManager = new FractalManager(rules);
+            fractalManager.buildWorld();
+            player.position.set(0, 0, 15);
+            player.velocity.set(0,0,0);
+            player.scaleExp = 0;
+            updateScaleUI();
+            updateSpeedUI();
+            document.getElementById('json-error').style.display = 'none';
+        } catch (e) {
+            console.error(e);
+            document.getElementById('json-error').style.display = 'block';
+            document.getElementById('json-error').innerText = e.message;
+        }
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        delta = clock.getDelta();
+        
+        if (!isEditorOpen) {
+            // CONSTANT MOVEMENT SPEED:
+            // Does not scale with world size. This forces the "small" feeling.
+            const moveSpeed = 15.0 * speedMultiplier; 
+            
+            const direction = new THREE.Vector3();
+            const forward = new THREE.Vector3(0, 0, -1).applyEuler(player.rotation);
+            const right = new THREE.Vector3(1, 0, 0).applyEuler(player.rotation);
+            const up = new THREE.Vector3(0, 1, 0); 
+
+            if (keys['KeyW']) direction.add(forward);
+            if (keys['KeyS']) direction.add(forward.clone().negate());
+            if (keys['KeyA']) direction.add(right.clone().negate());
+            if (keys['KeyD']) direction.add(right);
+            if (keys['Space']) direction.add(up);
+            if (keys['ShiftLeft']) direction.add(up.clone().negate());
+
+            direction.normalize();
+            player.position.addScaledVector(direction, moveSpeed * delta);
+        }
+
+        camera.position.copy(player.position);
+        camera.rotation.copy(player.rotation);
+
+        if (fractalManager) fractalManager.update();
+
+        renderer.render(scene, camera);
+    }
+
+    function adjustScale(deltaStep) {
+        // Scale player position to maintain relative context
+        const oldFactor = Math.pow(BASE_SCALE_FACTOR, player.scaleExp);
+        player.scaleExp += deltaStep;
+        const newFactor = Math.pow(BASE_SCALE_FACTOR, player.scaleExp);
+        
+        const ratio = newFactor / oldFactor;
+        player.position.multiplyScalar(ratio);
+        
+        updateScaleUI();
+    }
+
+    function adjustSpeed(direction) {
+        if (direction > 0) {
+            speedMultiplier *= 1.5;
+        } else {
+            speedMultiplier /= 1.5;
+        }
+        
+        // Reasonable clamp to prevent breaking math
+        if (speedMultiplier < 0.0001) speedMultiplier = 0.0001;
+        if (speedMultiplier > 1000000) speedMultiplier = 1000000;
+
+        updateSpeedUI();
+    }
+
+    function updateScaleUI() {
+        document.getElementById('scale-indicator').innerText = `Level: ${player.scaleExp}`;
+    }
+
+    function updateSpeedUI() {
+        // Show scientific notation if too large
+        const disp = speedMultiplier > 1000 ? speedMultiplier.toExponential(1) : speedMultiplier.toFixed(1);
+        document.getElementById('speed-indicator').innerText = `Speed: ${disp}x`;
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function toggleEditor() {
+        const p = document.getElementById('editor-panel');
+        isEditorOpen = !isEditorOpen;
+        if (isEditorOpen) {
+            p.classList.add('open');
+            document.exitPointerLock();
+            isLocked = false;
+        } else {
+            p.classList.remove('open');
+        }
+    }
+
+    function applyRules() {
+        const txt = document.getElementById('json-input').value;
+        try {
+            const rules = JSON.parse(txt);
+            if (!rules.blocks || !rules.colors || !rules.world) throw new Error("Missing main sections");
+            loadFractal(rules);
+        } catch (e) {
+            const errDiv = document.getElementById('json-error');
+            errDiv.style.display = 'block';
+            errDiv.innerText = "Error: " + e.message;
+        }
+    }
+
+    function resetToDefault() {
+        document.getElementById('json-input').value = JSON.stringify(defaultRules, null, 4);
+        applyRules();
+    }
+
+    init();
+
+</script>
+</body>
+</html>
