@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Healthy Food Sorter</title>
+    <style>
+        /* --- Styles --- */
+        :root {
+            --healthy-color: #4CAF50;
+            --healthy-bg: #E8F5E9;
+            --unhealthy-color: #F44336;
+            --unhealthy-bg: #FFEBEE;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif;
+            background-color: #E0F7FA;
+            user-select: none; /* Prevent text selection while dragging */
+            -webkit-user-select: none;
+            touch-action: none; /* Prevent scrolling on mobile */
+        }
+
+        /* UI Elements */
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        h1 {
+            margin: 0;
+            color: #00838F;
+            font-size: 28px;
+            text-shadow: 2px 2px 0px #fff;
+        }
+
+        #level-indicator {
+            font-size: 20px;
+            color: #006064;
+            font-weight: bold;
+            background: rgba(255, 255, 255, 0.7);
+            padding: 5px 15px;
+            border-radius: 20px;
+            display: inline-block;
+            margin-top: 5px;
+        }
+
+        /* Bins */
+        .bin {
+            position: absolute;
+            width: 130px;
+            height: 140px;
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+            border: 5px dashed;
+            box-sizing: border-box;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 2;
+        }
+
+        .bin-icon {
+            font-size: 40px;
+            margin-bottom: 5px;
+        }
+
+        #healthy-bin {
+            border-color: var(--healthy-color);
+            background-color: var(--healthy-bg);
+            color: #2E7D32;
+        }
+
+        #unhealthy-bin {
+            border-color: var(--unhealthy-color);
+            background-color: var(--unhealthy-bg);
+            color: #C62828;
+        }
+
+        .bin.pulse {
+            transform: scale(1.1);
+        }
+
+        /* Food Item */
+        #food {
+            position: absolute;
+            font-size: 90px; /* Big emoji */
+            cursor: grab;
+            z-index: 10;
+            /* Center perfectly using flex so the dragging calculations match the visual center */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100px;
+            height: 100px;
+            filter: drop-shadow(0px 8px 10px rgba(0,0,0,0.2));
+            transition: transform 0.1s;
+        }
+
+        #food:active {
+            cursor: grabbing;
+            transform: scale(1.1);
+        }
+
+        /* Animations */
+        .wobble {
+            animation: wobble-anim 0.5s ease-in-out;
+        }
+
+        @keyframes wobble-anim {
+            0%, 100% { transform: translateX(0) scale(1); }
+            25% { transform: translateX(-15px) scale(1) rotate(-10deg); }
+            50% { transform: translateX(15px) scale(1) rotate(10deg); }
+            75% { transform: translateX(-15px) scale(1) rotate(-10deg); }
+        }
+
+        .pop-out {
+            animation: pop-anim 0.4s forwards cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes pop-anim {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 1; }
+            100% { transform: scale(0); opacity: 0; }
+        }
+
+        /* Win Screen */
+        #win-screen {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.9);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        #win-screen h2 {
+            font-size: 60px;
+            color: #FF9800;
+            margin: 0;
+            text-shadow: 3px 3px 0px #FFF, 5px 5px 0px #FFC107;
+            animation: bounce 2s infinite;
+        }
+
+        #win-screen p {
+            font-size: 24px;
+            color: #333;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 15px 40px;
+            font-size: 24px;
+            font-family: inherit;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+            transition: transform 0.2s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-30px); }
+            60% { transform: translateY(-15px); }
+        }
+
+        /* Confetti piece */
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f00;
+            z-index: 99;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- UI Elements -->
+    <div id="ui-layer">
+        <h1>Healthy or Unhealthy?</h1>
+        <div id="level-indicator">Level <span id="current-level">1</span> / 20</div>
+    </div>
+
+    <!-- Bins -->
+    <div id="healthy-bin" class="bin">
+        <div class="bin-icon">💚</div>
+        Healthy
+    </div>
+    <div id="unhealthy-bin" class="bin">
+        <div class="bin-icon">🔴</div>
+        Unhealthy
+    </div>
+
+    <!-- Draggable Food -->
+    <div id="food">🍎</div>
+
+    <!-- Win Screen -->
+    <div id="win-screen">
+        <h2>You Win! 🎉</h2>
+        <p>You get 100 shiny rocks!🪨</p>
+        <button onclick="startGame()">Play Again</button>
+    </div>
+
+    <script>
+        /* --- Game Data --- */
+        const ALL_FOODS = [
+            { emoji: '🍎', type: 'healthy' },
+            { emoji: '🥦', type: 'healthy' },
+            { emoji: '🥕', type: 'healthy' },
+            { emoji: '🍌', type: 'healthy' },
+            { emoji: '🍉', type: 'healthy' },
+            { emoji: '🍇', type: 'healthy' },
+            { emoji: '🥑', type: 'healthy' },
+            { emoji: '🥗', type: 'healthy' },
+            { emoji: '🥛', type: 'healthy' },
+            { emoji: '🐟', type: 'healthy' },
+            { emoji: '🍔', type: 'unhealthy' },
+            { emoji: '🍟', type: 'unhealthy' },
+            { emoji: '🍕', type: 'unhealthy' },
+            { emoji: '🍩', type: 'unhealthy' },
+            { emoji: '🍫', type: 'unhealthy' },
+            { emoji: '🍬', type: 'unhealthy' },
+            { emoji: '🍰', type: 'unhealthy' },
+            { emoji: '🌭', type: 'unhealthy' },
+            { emoji: '🍦', type: 'unhealthy' },
+            { emoji: '🥤', type: 'unhealthy' }
+        ];
+
+        let gameQueue = [];
+        let currentLevel = 1;
+        const maxLevels = 20;
+
+        /* --- DOM Elements --- */
+        const foodEl = document.getElementById('food');
+        const healthyBin = document.getElementById('healthy-bin');
+        const unhealthyBin = document.getElementById('unhealthy-bin');
+        const levelText = document.getElementById('current-level');
+        const winScreen = document.getElementById('win-screen');
+
+        /* --- Drag and Drop State --- */
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+        let currentFoodType = '';
+
+        /* --- Initialization --- */
+        function shuffle(array) {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex !== 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        }
+
+        function startGame() {
+            gameQueue = shuffle([...ALL_FOODS]);
+            currentLevel = 1;
+            winScreen.style.display = 'none';
+            healthyBin.style.display = 'flex';
+            unhealthyBin.style.display = 'flex';
+            foodEl.style.display = 'flex';
+            loadLevel();
+        }
+
+        function loadLevel() {
+            if (currentLevel > maxLevels) {
+                showWinScreen();
+                return;
+            }
+
+            const currentFood = gameQueue[currentLevel - 1];
+            currentFoodType = currentFood.type;
+            
+            // Reset food appearance
+            foodEl.innerText = currentFood.emoji;
+            foodEl.className = ''; 
+            foodEl.style.transform = 'scale(1)';
+            foodEl.style.opacity = '1';
+
+            levelText.innerText = currentLevel;
+
+            // Position elements
+            centerFood();
+            randomizeBins();
+        }
+
+        /* --- Positioning Logic --- */
+        function centerFood() {
+            // Absolute center of the screen
+            const cx = window.innerWidth / 2 - foodEl.offsetWidth / 2;
+            const cy = window.innerHeight / 2 - foodEl.offsetHeight / 2;
+            foodEl.style.left = `${cx}px`;
+            foodEl.style.top = `${cy}px`;
+        }
+
+        function getRandomPosition(elementWidth, elementHeight) {
+            // Keep bins away from the edges and the top UI text
+            const paddingX = 20;
+            const paddingTop = 100;
+            const paddingBottom = 20;
+            
+            const minX = paddingX;
+            const maxX = window.innerWidth - elementWidth - paddingX;
+            const minY = paddingTop;
+            const maxY = window.innerHeight - elementHeight - paddingBottom;
+
+            const x = minX + Math.random() * (maxX - minX);
+            const y = minY + Math.random() * (maxY - minY);
+            
+            return { x, y, right: x + elementWidth, bottom: y + elementHeight };
+        }
+
+        function randomizeBins() {
+            const bw = healthyBin.offsetWidth;
+            const bh = healthyBin.offsetHeight;
+
+            // Define the "center zone" where the food is. Bins shouldn't spawn here.
+            const centerZone = {
+                left: window.innerWidth / 2 - 120,
+                right: window.innerWidth / 2 + 120,
+                top: window.innerHeight / 2 - 120,
+                bottom: window.innerHeight / 2 + 120
+            };
+
+            let hPos, uPos;
+            let validPositions = false;
+            let attempts = 0;
+
+            // Find valid, non-overlapping positions
+            while (!validPositions && attempts < 100) {
+                hPos = getRandomPosition(bw, bh);
+                uPos = getRandomPosition(bw, bh);
+
+                // Check if bins overlap each other
+                const binsOverlap = !(hPos.right < uPos.x || hPos.x > uPos.right || hPos.bottom < uPos.y || hPos.y > uPos.bottom);
+
+                // Check if bins overlap the center area
+                const hCenterOverlap = !(hPos.right < centerZone.left || hPos.x > centerZone.right || hPos.bottom < centerZone.top || hPos.y > centerZone.bottom);
+                const uCenterOverlap = !(uPos.right < centerZone.left || uPos.x > centerZone.right || uPos.bottom < centerZone.top || uPos.y > centerZone.bottom);
+
+                if (!binsOverlap && !hCenterOverlap && !uCenterOverlap) {
+                    validPositions = true;
+                }
+                attempts++;
+            }
+
+            // Apply positions
+            healthyBin.style.left = `${hPos.x}px`;
+            healthyBin.style.top = `${hPos.y}px`;
+            unhealthyBin.style.left = `${uPos.x}px`;
+            unhealthyBin.style.top = `${uPos.y}px`;
+        }
+
+        /* --- Drag and Drop Interaction --- */
+        
+        // Pointer events work for BOTH mouse and touch screens
+        foodEl.addEventListener('pointerdown', (e) => {
+            if (foodEl.classList.contains('pop-out') || foodEl.classList.contains('wobble')) return;
+
+            isDragging = true;
+            foodEl.setPointerCapture(e.pointerId);
+            
+            startX = e.clientX;
+            startY = e.clientY;
+            initialLeft = parseFloat(foodEl.style.left) || 0;
+            initialTop = parseFloat(foodEl.style.top) || 0;
+            
+            foodEl.style.transition = 'none'; // Disable transition for smooth dragging
+        });
+
+        foodEl.addEventListener('pointermove', (e) => {
+            if (!isDragging) return;
+            
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            
+            foodEl.style.left = `${initialLeft + dx}px`;
+            foodEl.style.top = `${initialTop + dy}px`;
+
+            // Visual feedback when hovering over a bin
+            checkHoverEffect();
+        });
+
+        foodEl.addEventListener('pointerup', (e) => {
+            if (!isDragging) return;
+            isDragging = false;
+            foodEl.style.transition = 'transform 0.1s'; // Re-enable standard transition
+            
+            healthyBin.classList.remove('pulse');
+            unhealthyBin.classList.remove('pulse');
+
+            checkDrop();
+        });
+
+        // Cancel dragging if pointer leaves window
+        foodEl.addEventListener('pointercancel', () => {
+            isDragging = false;
+            centerFood();
+        });
+
+        /* --- Game Logic --- */
+        function isColliding(el1, el2) {
+            const rect1 = el1.getBoundingClientRect();
+            const rect2 = el2.getBoundingClientRect();
+            
+            // Calculate center of the dragging item
+            const el1CenterX = rect1.left + rect1.width / 2;
+            const el1CenterY = rect1.top + rect1.height / 2;
+
+            // Check if the center of the food is inside the bin's rectangle
+            return (
+                el1CenterX >= rect2.left &&
+                el1CenterX <= rect2.right &&
+                el1CenterY >= rect2.top &&
+                el1CenterY <= rect2.bottom
+            );
+        }
+
+        function checkHoverEffect() {
+            if (isColliding(foodEl, healthyBin)) {
+                healthyBin.classList.add('pulse');
+            } else {
+                healthyBin.classList.remove('pulse');
+            }
+
+            if (isColliding(foodEl, unhealthyBin)) {
+                unhealthyBin.classList.add('pulse');
+            } else {
+                unhealthyBin.classList.remove('pulse');
+            }
+        }
+
+        function checkDrop() {
+            const droppedInHealthy = isColliding(foodEl, healthyBin);
+            const droppedInUnhealthy = isColliding(foodEl, unhealthyBin);
+
+            if (droppedInHealthy) {
+                if (currentFoodType === 'healthy') {
+                    handleCorrectDrop(healthyBin);
+                } else {
+                    handleWrongDrop();
+                }
+            } else if (droppedInUnhealthy) {
+                if (currentFoodType === 'unhealthy') {
+                    handleCorrectDrop(unhealthyBin);
+                } else {
+                    handleWrongDrop();
+                }
+            } else {
+                // Dropped nowhere, snap back
+                foodEl.style.transition = 'left 0.3s, top 0.3s';
+                centerFood();
+            }
+        }
+
+        function handleCorrectDrop(targetBin) {
+            foodEl.classList.add('pop-out');
+            
+            // Move it smoothly exactly to the bin center before popping
+            const targetRect = targetBin.getBoundingClientRect();
+            foodEl.style.transition = 'left 0.2s, top 0.2s';
+            foodEl.style.left = `${targetRect.left + targetRect.width/2 - foodEl.offsetWidth/2}px`;
+            foodEl.style.top = `${targetRect.top + targetRect.height/2 - foodEl.offsetHeight/2}px`;
+
+            createParticles(targetRect.left + targetRect.width/2, targetRect.top + targetRect.height/2);
+
+            setTimeout(() => {
+                currentLevel++;
+                loadLevel();
+            }, 600); // Wait for animation
+        }
+
+        function handleWrongDrop() {
+            // Snap back to center
+            foodEl.style.transition = 'left 0.3s, top 0.3s';
+            centerFood();
+            
+            // Play wobble animation
+            foodEl.classList.add('wobble');
+            setTimeout(() => {
+                foodEl.classList.remove('wobble');
+            }, 500);
+        }
+
+        function showWinScreen() {
+            healthyBin.style.display = 'none';
+            unhealthyBin.style.display = 'none';
+            foodEl.style.display = 'none';
+            winScreen.style.display = 'flex';
+            
+            // Simple confetti effect
+            for(let i=0; i<50; i++) {
+                createParticles(window.innerWidth/2, window.innerHeight/2, true);
+            }
+        }
+
+        /* --- Visual Effects --- */
+        function createParticles(x, y, isConfetti = false) {
+            const colors = ['#4CAF50', '#FFEB3B', '#FF9800', '#F44336', '#2196F3'];
+            const numParticles = isConfetti ? 1 : 10;
+
+            for (let i = 0; i < numParticles; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'confetti';
+                particle.style.left = `${x}px`;
+                particle.style.top = `${y}px`;
+                particle.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                
+                // Random physics
+                const angle = Math.random() * Math.PI * 2;
+                const velocity = isConfetti ? (10 + Math.random() * 20) : (5 + Math.random() * 10);
+                const vx = Math.cos(angle) * velocity;
+                let vy = Math.sin(angle) * velocity - (isConfetti ? 10 : 0); // Confetti shoots up
+                
+                document.body.appendChild(particle);
+
+                let opacity = 1;
+                const animateParticle = () => {
+                    if (opacity <= 0) {
+                        particle.remove();
+                        return;
+                    }
+                    
+                    const currentLeft = parseFloat(particle.style.left);
+                    const currentTop = parseFloat(particle.style.top);
+                    
+                    vy += 0.5; // Gravity
+                    
+                    particle.style.left = `${currentLeft + vx}px`;
+                    particle.style.top = `${currentTop + vy}px`;
+                    
+                    opacity -= 0.02;
+                    particle.style.opacity = opacity;
+                    
+                    requestAnimationFrame(animateParticle);
+                };
+                
+                requestAnimationFrame(animateParticle);
+            }
+        }
+
+        // Handle window resizing safely
+        window.addEventListener('resize', () => {
+            if (winScreen.style.display !== 'flex') {
+                centerFood();
+                randomizeBins();
+            }
+        });
+
+        // Start game on load
+        window.onload = startGame;
+
+    </script>
+</body>
+</html>
